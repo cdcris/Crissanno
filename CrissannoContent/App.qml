@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Window
 import Crissanno
+import "ui"
 
 Window {
     // A windowed default makes the app immediately resizable; the limits keep
@@ -16,8 +17,8 @@ Window {
     visibility: Window.Windowed
     title: "Crissanno"
 
-    Screen01 {
-        id: mainScreen
+    Annotation {
+        id: annotationScreen
 
         anchors.fill: parent
     }

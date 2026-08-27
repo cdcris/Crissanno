@@ -2,4 +2,4 @@
 name = "Crissanno"
 
 [tool.pyside6-project]
-files = ["main.py", "autogen/settings.py"]
+files = ["main.py", "export_bridge.py", "yolo_exporter.py", "autogen/settings.py"]

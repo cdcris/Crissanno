@@ -45,6 +45,10 @@ AnnotationForm {
     property bool restoringHistory: false
     property real previousAnnotationLayerWidth: 0
     property real previousAnnotationLayerHeight: 0
+    // Qt Design Studio can preview this component without starting the Python
+    // launcher. In that mode the context property is intentionally absent.
+    readonly property var exportBackend: typeof datasetExporter !== "undefined"
+                                         ? datasetExporter : null
 
     FolderListModel {
         id: datasetFolderModel
@@ -138,7 +142,68 @@ AnnotationForm {
             })
         }
         topBar.menuItems = updatedItems
+        if (label === qsTr("Export")) {
+            exportUltralyticsYoloDetection()
+            return
+        }
         topBar.statusText = label + " selected"
+    }
+
+    function buildExportPayload() {
+        saveAnnotationsForImage(currentImageIndex)
+        const images = []
+        for (let index = 1; index <= imageSources.length; ++index) {
+            const state = annotationsForImage(index)
+            const annotations = []
+            for (let objectIndex = 0; objectIndex < state.objects.length;
+                 ++objectIndex) {
+                const item = state.objects[objectIndex]
+                annotations.push({
+                    classId: item.classId,
+                    shape: item.shape,
+                    boxX: item.boxX,
+                    boxY: item.boxY,
+                    boxW: item.boxW,
+                    boxH: item.boxH
+                })
+            }
+            images.push({
+                source: String(imageSources[index - 1]),
+                name: imageFileName(imageSources[index - 1]),
+                canvasWidth: state.canvasWidth || annotationLayer.width,
+                canvasHeight: state.canvasHeight || annotationLayer.height,
+                annotations: annotations
+            })
+        }
+        const classes = []
+        for (let classIndex = 0; classIndex < staticClasses.length; ++classIndex) {
+            classes.push({
+                classId: staticClasses[classIndex].classId,
+                label: staticClasses[classIndex].label
+            })
+        }
+        return { classes: classes, images: images }
+    }
+
+    function exportUltralyticsYoloDetection() {
+        if (!exportBackend) {
+            topBar.statusText = qsTr("Export requires python Python/main.py")
+            return
+        }
+        topBar.statusText = qsTr("Preparing Ultralytics YOLO Detection 1.0...")
+        const result = exportBackend.exportUltralyticsYoloDetection(
+                    buildExportPayload())
+        if (result.cancelled) {
+            topBar.statusText = qsTr("Export cancelled")
+        } else if (!result.ok) {
+            topBar.statusText = qsTr("Export failed: ") + result.error
+        } else {
+            topBar.statusText = qsTr("Exported %1 images and %2 boxes")
+                    .arg(result.images).arg(result.boxes)
+            if (result.skipped > 0)
+                topBar.statusText += qsTr(" (%1 non-box annotations skipped)")
+                        .arg(result.skipped)
+        }
     }
 
     function discardPolygonDraft() {
@@ -242,6 +307,8 @@ AnnotationForm {
 
         return {
             objects: objects,
+            canvasWidth: annotationLayer.width,
+            canvasHeight: annotationLayer.height,
             polygonPaths: polygonPaths.map((path) => ({
                 annotationId: path.annotationId,
                 label: path.label,
