@@ -1,0 +1,16 @@
+<RCC>
+    <qresource>
+        <file>Crissanno.qmlproject</file>
+        <file>Crissanno/Constants.qml</file>
+        <file>Crissanno/EventListModel.qml</file>
+        <file>Crissanno/EventListSimulator.qml</file>
+        <file>Crissanno/qmldir</file>
+        <file>CrissannoContent/App.qml</file>
+        <file>CrissannoContent/Screen01.ui.qml</file>
+        <file>CrissannoContent/ui/Annotation.qml</file>
+        <file>CrissannoContent/ui/AnnotationForm.ui.qml</file>
+        <file>CrissannoContent/ui/AppTopBar.qml</file>
+        <file>Python/.vscode/settings.json</file>
+        <file>qtquickcontrols2.conf</file>
+    </qresource>
+</RCC>

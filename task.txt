@@ -1,0 +1,1 @@
+For 5k–10k+, I recommend loading image paths lazily and persisting each image’s annotations to disk/database instead of keeping all annotation states in QML memory.

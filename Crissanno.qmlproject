@@ -1,0 +1,124 @@
+// prop: json-converted
+// prop: auto-generated
+
+import QmlProject
+
+Project {
+    
+    
+    mainFile: "CrissannoContent/ui/Annotation.qml"
+    mainUiFile: "CrissannoContent/ui/AnnotationForm.ui.qml"
+    
+    
+    //mainFile: "CrissannoContent/App.qml"
+    //mainUiFile: "CrissannoContent/Screen01.ui.qml"
+
+    targetDirectory: "/opt/Crissanno"
+    enablePythonGeneration: true
+    widgetApp: true
+    importPaths: [ "." ]
+
+    qdsVersion: "4.8"
+    quickVersion: "6.8"
+    qt6Project: true
+    qtForMCUs: false
+
+    multilanguageSupport: true
+    primaryLanguage: "en"
+    supportedLanguages: [ "en" ]
+
+    Environment {
+        QML_COMPAT_RESOLVE_URLS_ON_ASSIGNMENT: "1"
+        QT_ENABLE_HIGHDPI_SCALING: "0"
+        QT_LOGGING_RULES: "qt.qml.connections=false"
+        QT_QUICK_CONTROLS_CONF: "qtquickcontrols2.conf"
+    }
+
+    ShaderTool {
+        args: "-s --glsl 100es,120,150 --hlsl 50 --msl 12"
+        files: [ "CrissannoContent/shaders/*" ]
+    }
+
+    EffectComposer {
+        qsbArgs: "-s --glsl 300es,140,330,410 --hlsl 50 --msl 12"
+    }
+
+    QmlFiles {
+        directory: "Crissanno"
+    }
+
+    QmlFiles {
+        directory: "CrissannoContent"
+    }
+
+    QmlFiles {
+        directory: "Generated"
+    }
+
+    JavaScriptFiles {
+        directory: "Crissanno"
+    }
+
+    JavaScriptFiles {
+        directory: "CrissannoContent"
+    }
+
+    ImageFiles {
+        directory: "CrissannoContent"
+    }
+
+    ImageFiles {
+        directory: "Generated"
+    }
+
+    Files {
+        filter: "*.conf"
+        files: [
+            "qtquickcontrols2.conf"
+        ]
+    }
+
+    Files {
+        directory: "."
+        filter: "qmldir"
+    }
+
+    FontFiles {
+        filter: "*.ttf;*.otf"
+    }
+
+    Files {
+        filter: "*.wav;*.mp3"
+    }
+
+    Files {
+        filter: "*.mp4"
+    }
+
+    Files {
+        filter: "*.glsl;*.glslv;*.glslf;*.vsh;*.fsh;*.vert;*.frag"
+    }
+
+    Files {
+        filter: "*.qsb"
+    }
+
+    Files {
+        filter: "*.json"
+    }
+
+    Files {
+        directory: "Generated"
+        filter: "*.mesh"
+    }
+
+    Files {
+        directory: "Generated"
+        filter: "*.qad"
+    }
+
+    Files {
+        directory: "CrissannoContent"
+        filter: "*.bin;*.exr;*.mesh"
+    }
+}

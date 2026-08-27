@@ -1,0 +1,5 @@
+[project]
+name = "Crissanno"
+
+[tool.pyside6-project]
+files = ["main.py", "autogen/settings.py"]
