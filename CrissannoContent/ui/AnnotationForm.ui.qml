@@ -72,6 +72,7 @@ Rectangle {
     property alias gridToggleArea: gridToggleArea
     property alias canvasWheelHandler: canvasWheelHandler
     property alias drawingArea: drawingArea
+    property alias boxClassComboBox: boxClassComboBox
 
     // ---- signals the logic layer connects to ----
     signal toolSelected(string tool)
@@ -90,6 +91,8 @@ Rectangle {
     signal fitRequested
     signal gridToggleRequested
     signal boxDrawn(real x, real y, real width, real height)
+    signal boxClassPickerRequested
+    signal boxClassSelected(int index)
     signal polygonDrawn(var points)
     signal canvasPanStarted(real x, real y)
     signal canvasPanMoved(real x, real y)
@@ -214,6 +217,7 @@ Rectangle {
         // ========================================================
         Rectangle {
             id: leftPanel
+            z: 10
             // Let the inspector panels grow modestly on wide displays but
             // reserve the bulk of the space for the annotation canvas.
             width: Math.round(Math.max(208, Math.min(248, root.width * 0.17)))
@@ -448,6 +452,7 @@ Rectangle {
                     MouseArea {
                         id: boxToolArea
                         anchors.fill: parent
+                        acceptedButtons: Qt.LeftButton | Qt.RightButton
                         hoverEnabled: true
                         onEntered: bBox.hovered = true
                         onExited: bBox.hovered = false
@@ -455,8 +460,29 @@ Rectangle {
 
                     Connections {
                         target: boxToolArea
-                        function onClicked() {
-                            root.toolSelected("box")
+                        function onClicked(mouse) {
+                            if (mouse.button === Qt.RightButton)
+                                root.boxClassPickerRequested()
+                            else
+                                root.toolSelected("box")
+                        }
+                    }
+
+                    ComboBox {
+                        id: boxClassComboBox
+                        x: parent.width + theme.spacingS
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 132
+                        visible: false
+                        z: 100
+                        model: [qsTr("A"), qsTr("B"), qsTr("C"), qsTr("D")]
+                    }
+
+                    Connections {
+                        target: boxClassComboBox
+
+                        function onActivated(index) {
+                            root.boxClassSelected(index)
                         }
                     }
                 }
@@ -1695,7 +1721,7 @@ Rectangle {
                         anchors.left: parent.left
                         anchors.leftMargin: 36
                         anchors.verticalCenter: parent.verticalCenter
-                        text: qsTr("person")
+                        text: qsTr("A")
                         color: theme.textPrimary
                         font.family: Constants.font.family
                         font.pixelSize: 14

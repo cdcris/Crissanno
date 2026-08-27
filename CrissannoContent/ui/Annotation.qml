@@ -12,6 +12,7 @@ Save this file as AnnotationForm.qml next to AnnotationForm.ui.qml so the
 type name below resolves.
 */
 import QtQuick
+import Qt.labs.folderlistmodel
 
 AnnotationForm {
     id: form
@@ -22,22 +23,16 @@ AnnotationForm {
     // ------------------------------------------------------------
     property string currentTool: "box"
     property int currentImageIndex: 1
-    property int totalImages: 10
-    // Annotation.qml lives in CrissannoContent/ui, so Images is two levels up.
-    property var datasetImages: [
-        Qt.resolvedUrl("../../Images/othr_1000.jpg"),
-        Qt.resolvedUrl("../../Images/othr_1001.jpg"),
-        Qt.resolvedUrl("../../Images/othr_1002.jpg"),
-        Qt.resolvedUrl("../../Images/othr_1003.jpg"),
-        Qt.resolvedUrl("../../Images/othr_1004.jpg"),
-        Qt.resolvedUrl("../../Images/othr_1005.jpg"),
-        Qt.resolvedUrl("../../Images/othr_1006.jpg"),
-        Qt.resolvedUrl("../../Images/othr_1007.jpg"),
-        Qt.resolvedUrl("../../Images/othr_1008.jpg"),
-        Qt.resolvedUrl("../../Images/othr_1009.jpg")
-    ]
+    property int totalImages: 0
     property int zoomPercent: 100
-    property var classPalette: ["#2389ff", "#58c62e", "#ff9818", "#bd6cff", "#e8636c", "#24b8a8"]
+    readonly property var staticClasses: [
+        { classId: "class0", label: qsTr("A"), colorHex: "#2389ff" },
+        { classId: "class1", label: qsTr("B"), colorHex: "#58c62e" },
+        { classId: "class2", label: qsTr("C"), colorHex: "#ff9818" },
+        { classId: "class3", label: qsTr("D"), colorHex: "#bd6cff" }
+    ]
+    property int currentClassIndex: 0
+    property int nextAnnotationId: 0
     property string toolBeforePan: "box"
     property bool panShortcutActive: false
     property bool canvasPanning: false
@@ -50,6 +45,17 @@ AnnotationForm {
     property bool restoringHistory: false
     property real previousAnnotationLayerWidth: 0
     property real previousAnnotationLayerHeight: 0
+
+    FolderListModel {
+        id: datasetFolderModel
+
+        folder: Qt.resolvedUrl("../../Images")
+        nameFilters: ["*.bmp", "*.gif", "*.jpeg", "*.jpg", "*.png", "*.webp"]
+        showDirs: false
+        sortField: FolderListModel.Name
+
+        onCountChanged: form.refreshDatasetImages()
+    }
 
     // A resize changes the visible canvas bounds. Re-clamp any zoomed/panned
     // image so it remains reachable after the window becomes smaller.
@@ -71,11 +77,19 @@ AnnotationForm {
         }
     }
 
+    Connections {
+        target: boxClassComboBox.popup
+
+        function onClosed() {
+            boxClassComboBox.visible = false
+        }
+    }
+
     Component.onCompleted: {
         forceActiveFocus()
         applyToolSelection()
         syncPropertiesPanel(selectedObjectIndex())
-        imageSources = datasetImages
+        refreshDatasetImages()
         updateImageLabels()
         setZoom(zoomPercent)
     }
@@ -94,6 +108,25 @@ AnnotationForm {
     onToolSelected: (tool) => {
         currentTool = tool
         applyToolSelection()
+        boxClassComboBox.visible = false
+    }
+
+    onBoxClassPickerRequested: {
+        currentTool = "box"
+        applyToolSelection()
+        boxClassComboBox.currentIndex = currentClassIndex
+        boxClassComboBox.visible = true
+        boxClassComboBox.forceActiveFocus()
+        boxClassComboBox.popup.open()
+    }
+
+    onBoxClassSelected: (index) => {
+        if (index < 0 || index >= staticClasses.length)
+            return
+        currentClassIndex = index
+        boxClassComboBox.currentIndex = index
+        boxClassComboBox.popup.close()
+        boxClassComboBox.visible = false
     }
 
     onTopMenuClicked: (index, label) => {
@@ -173,6 +206,7 @@ AnnotationForm {
         }
 
         polygonPaths = polygonPaths.map((path) => ({
+            annotationId: path.annotationId,
             label: path.label,
             colorHex: path.colorHex,
             points: copyPoints(path.points).map((point) =>
@@ -191,6 +225,8 @@ AnnotationForm {
         for (let i = 0; i < objectsModel.count; ++i) {
             const item = objectsModel.get(i)
             objects.push({
+                annotationId: item.annotationId,
+                classId: item.classId,
                 label: item.label,
                 shape: item.shape,
                 points: copyPoints(item.points),
@@ -207,6 +243,7 @@ AnnotationForm {
         return {
             objects: objects,
             polygonPaths: polygonPaths.map((path) => ({
+                annotationId: path.annotationId,
                 label: path.label,
                 colorHex: path.colorHex,
                 points: copyPoints(path.points),
@@ -392,9 +429,10 @@ AnnotationForm {
 
         if (item.shape === "polygon") {
             polygonPaths = polygonPaths.map((path) => {
-                if (path.label !== item.label)
+                if (path.annotationId !== item.annotationId)
                     return path
                 return {
+                    annotationId: path.annotationId,
                     label: path.label,
                     colorHex: path.colorHex,
                     points: path.points.map((point) => Qt.point(
@@ -428,19 +466,32 @@ AnnotationForm {
             return
         const item = objectsModel.get(index)
         labelChipText.text = item.label
+        labelChipSwatch.color = item.colorHex
         xValueText.text = String(item.boxX)
         yValueText.text = String(item.boxY)
         widthValueText.text = String(item.boxW)
         heightValueText.text = String(item.boxH)
     }
 
+    function currentStaticClass() {
+        return staticClasses[currentClassIndex]
+    }
+
+    function createAnnotationId() {
+        nextAnnotationId += 1
+        return nextAnnotationId
+    }
+
     onAddObjectRequested: {
         recordHistory()
         const index = objectsModel.count
+        const annotationClass = currentStaticClass()
         objectsModel.append({
-            label: "box " + (index + 1),
+            annotationId: createAnnotationId(),
+            classId: annotationClass.classId,
+            label: annotationClass.label,
             shape: "box",
-            colorHex: classPalette[index % classPalette.length],
+            colorHex: annotationClass.colorHex,
             selected: true,
             locked: false,
             boxX: 120,
@@ -529,11 +580,14 @@ AnnotationForm {
         const boxW = Math.abs(width)
         const boxH = Math.abs(height)
         const index = objectsModel.count
+        const annotationClass = currentStaticClass()
 
         objectsModel.append({
-            label: "box " + (index + 1),
+            annotationId: createAnnotationId(),
+            classId: annotationClass.classId,
+            label: annotationClass.label,
             shape: "box",
-            colorHex: classPalette[index % classPalette.length],
+            colorHex: annotationClass.colorHex,
             selected: true,
             locked: false,
             boxX: Math.round(boxX),
@@ -565,14 +619,18 @@ AnnotationForm {
         }
 
         const index = objectsModel.count
-        const label = "polygon " + (index + 1)
-        const colorHex = classPalette[index % classPalette.length]
+        const annotationClass = currentStaticClass()
+        const annotationId = createAnnotationId()
+        const label = annotationClass.label
+        const colorHex = annotationClass.colorHex
         const closedPoints = points.concat([points[0]])
         const boxX = Math.round(minX)
         const boxY = Math.round(minY)
         const boxW = Math.round(maxX - minX)
         const boxH = Math.round(maxY - minY)
         objectsModel.append({
+            annotationId: annotationId,
+            classId: annotationClass.classId,
             label: label,
             shape: "polygon",
             points: closedPoints,
@@ -585,6 +643,7 @@ AnnotationForm {
             boxH: boxH
         })
         polygonPaths = polygonPaths.concat([{
+            annotationId: annotationId,
             label: label,
             colorHex: colorHex,
             points: closedPoints,
@@ -602,7 +661,10 @@ AnnotationForm {
         recordHistory()
         const item = objectsModel.get(idx)
         objectsModel.setProperty(idx, "selected", false)
+        const duplicateAnnotationId = createAnnotationId()
         objectsModel.insert(idx + 1, {
+            annotationId: duplicateAnnotationId,
+            classId: item.classId,
             label: item.label,
             shape: item.shape,
             points: copyPoints(item.points),
@@ -614,6 +676,21 @@ AnnotationForm {
             boxW: item.boxW,
             boxH: item.boxH
         })
+        if (item.shape === "polygon") {
+            const sourcePath = polygonPaths.find((path) =>
+                path.annotationId === item.annotationId)
+            if (sourcePath) {
+                polygonPaths = polygonPaths.concat([{
+                    annotationId: duplicateAnnotationId,
+                    label: sourcePath.label,
+                    colorHex: sourcePath.colorHex,
+                    points: sourcePath.points.map((point) =>
+                        Qt.point(point.x + 12, point.y + 12)),
+                    boxX: sourcePath.boxX + 12,
+                    boxY: sourcePath.boxY + 12
+                }])
+            }
+        }
         objectsCountText.text = String(objectsModel.count)
         syncPropertiesPanel(idx + 1)
     }
@@ -625,7 +702,8 @@ AnnotationForm {
         recordHistory()
         const item = objectsModel.get(idx)
         if (item.shape === "polygon")
-            polygonPaths = polygonPaths.filter((path) => path.label !== item.label)
+            polygonPaths = polygonPaths.filter((path) =>
+                path.annotationId !== item.annotationId)
         objectsModel.remove(idx)
         objectsCountText.text = String(objectsModel.count)
         const nextIndex = Math.min(idx, objectsModel.count - 1)
@@ -663,6 +741,30 @@ AnnotationForm {
     // ------------------------------------------------------------
     // Image navigation
     // ------------------------------------------------------------
+    function refreshDatasetImages() {
+        const sources = []
+        for (let i = 0; i < datasetFolderModel.count; ++i)
+            sources.push(datasetFolderModel.get(i, "fileUrl"))
+
+        sources.sort((left, right) => {
+            const leftKey = naturalImageSortKey(left)
+            const rightKey = naturalImageSortKey(right)
+            return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0
+        })
+        imageSources = sources
+    }
+
+    function naturalImageSortKey(source) {
+        return imageFileName(source).toLowerCase().replace(/\d+/g, digits => {
+            return ("000000000000" + digits).slice(-12)
+        })
+    }
+
+    function imageFileName(source) {
+        const sourceText = String(source)
+        return decodeURIComponent(sourceText.substring(sourceText.lastIndexOf("/") + 1))
+    }
+
     onPrevImageRequested: {
         showImage(currentImageIndex > 1 ? currentImageIndex - 1 : totalImages)
     }
@@ -694,7 +796,6 @@ AnnotationForm {
     function imageNameFor(index) {
         if (imageSources.length < index)
             return ""
-        const source = String(imageSources[index - 1])
-        return source.substring(source.lastIndexOf("/") + 1)
+        return imageFileName(imageSources[index - 1])
     }
 }
