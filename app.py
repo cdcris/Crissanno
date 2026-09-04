@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import time
 from pathlib import Path
 import tkinter as tk
@@ -21,6 +20,9 @@ except ImportError:
 
 from camera_worker import CameraWorker
 from color import COLORS, FONT_FAMILY, MONO_FONT_FAMILY, ServeScanTheme
+from error_log import get_error_log
+from errors import ErrorHandler
+from marker_store import MarkerStore
 from touch_button import TouchButton
 
 
@@ -42,6 +44,9 @@ class ServeScanApp(tk.Tk):
         self.geometry(WINDOW_SIZE)
         self.minsize(800, 480)
         self.theme = ServeScanTheme(self)
+        self.error_log = get_error_log()
+        self.errors = ErrorHandler(messagebox.showerror, self.error_log)
+        self.marker_store = MarkerStore(MARKER_PATH, CAMERA_SIZE)
         self.state_name = self.READY
         self.recorded_seconds = 0.0
         self.segment_started = 0.0
@@ -49,7 +54,7 @@ class ServeScanApp(tk.Tk):
         self.preview_photo = None
         self.preview_image_id = None
         self.last_rgb_frame = None
-        self.marker_position = self._load_marker_position()
+        self.marker_position = self.errors.protect(self.marker_store.load)
         self.camera_reported = False
         self.closing = False
 
@@ -59,11 +64,15 @@ class ServeScanApp(tk.Tk):
         self.bind("<Escape>", lambda _event: self.stop_capture())
         self.bind("<F11>", self._toggle_fullscreen)
 
-        self.camera = CameraWorker(CAMERA_SIZE, CAMERA_FPS)
+        self.camera = CameraWorker(CAMERA_SIZE, CAMERA_FPS, self.error_log)
         self.camera.set_marker_position(self.marker_position)
         self.camera.start()
         self.after(40, self._update_preview)
         self.after(200, self._update_elapsed)
+
+    def report_callback_exception(self, exc_type, exc_value, exc_traceback) -> None:
+        """Log exceptions raised by Tk event and timer callbacks."""
+        self.errors.handle(exc_value, "Application callback error", exc_traceback)
 
     def _build_ui(self) -> None:
         self.rowconfigure(1, weight=1)
@@ -188,17 +197,6 @@ class ServeScanApp(tk.Tk):
         )
         self.position_label.pack(anchor="e")
 
-    @staticmethod
-    def _load_marker_position() -> tuple[int, int] | None:
-        try:
-            data = json.loads(MARKER_PATH.read_text(encoding="utf-8"))
-            x, y = int(data["x"]), int(data["y"])
-            if 0 <= x < CAMERA_SIZE[0] and 0 <= y < CAMERA_SIZE[1]:
-                return x, y
-        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
-            pass
-        return None
-
     def _marker_text(self) -> str:
         if self.marker_position is None:
             return "Click preview"
@@ -230,12 +228,10 @@ class ServeScanApp(tk.Tk):
         self.camera.set_marker_position(self.marker_position)
         self.position_label.configure(text=self._marker_text())
         try:
-            MARKER_PATH.write_text(
-                json.dumps({"x": x, "y": y}, indent=2) + "\n",
-                encoding="utf-8",
-            )
-        except OSError as exc:
-            self.detail_label.configure(text=f"Could not save line position: {exc}")
+            self.marker_store.save(self.marker_position)
+        except Exception as error:
+            message = self.errors.handle(error, "Line position error")
+            self.detail_label.configure(text=message)
         self._render_preview()
 
     def _toggle_fullscreen(self, _event=None) -> None:
@@ -338,9 +334,10 @@ class ServeScanApp(tk.Tk):
             return
 
         if self.state_name == self.READY:
-            _path, error = self.camera.start_recording(Path.cwd() / "captures")
-            if error:
-                messagebox.showerror("Recording error", error)
+            try:
+                self.camera.start_recording(Path.cwd() / "captures")
+            except Exception as error:
+                self.errors.handle(error, "Recording error")
                 return
             self.recorded_seconds = 0.0
             self.segment_started = time.monotonic()

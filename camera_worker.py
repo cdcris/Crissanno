@@ -14,17 +14,25 @@ except ImportError:
     cv2 = None
 
 from camera_source import CameraSource
+from error_log import ErrorLog
+from errors import CameraError, ErrorHandler, RecordingError
 from usb_camera_source import open_usb_camera
 
 
 class CameraWorker:
     """Read camera frames away from Tk's UI thread."""
 
-    def __init__(self, size: tuple[int, int], fps: int) -> None:
+    def __init__(
+        self,
+        size: tuple[int, int],
+        fps: int,
+        error_log: ErrorLog | None = None,
+    ) -> None:
         self.size = size
         self.fps = fps
         self.source: Optional[CameraSource] = None
         self.error = ""
+        self.errors = ErrorHandler(error_log=error_log)
         self._frame = None
         self._frame_number = 0
         self._lock = threading.Lock()
@@ -56,14 +64,20 @@ class CameraWorker:
                         if self._marker_position is not None:
                             self._draw_recording_marker(video_frame, self._marker_position)
                         self._writer.write(video_frame)
-        except Exception as exc:
-            self.error = str(exc)
+        except CameraError as error:
+            self.error = str(error)
+            self.errors.handle(error, "Camera worker error")
+        except Exception as error:
+            self.error = f"Unexpected camera error: {error}"
+            self.errors.handle(error, "Camera worker error")
         finally:
             if self.source is not None:
                 try:
                     self.source.close()
-                except Exception:
-                    pass
+                except Exception as error:
+                    self.errors.handle(error, "Camera cleanup error")
+                    if not self.error:
+                        self.error = f"Could not close camera: {error}"
 
     def latest(self):
         with self._lock:
@@ -79,15 +93,18 @@ class CameraWorker:
         cv2.circle(frame, (video_x, video_y), 6, (255, 255, 255), -1)
         cv2.circle(frame, (video_x, video_y), 6, (28, 38, 218), 2)
 
-    def start_recording(self, capture_dir: Path) -> tuple[Optional[Path], str]:
-        """Start a timestamped recording and return (path, error_message)."""
+    def start_recording(self, capture_dir: Path) -> Path:
+        """Start a timestamped recording or raise ``RecordingError``."""
         if cv2 is None:
-            return None, "Install python3-opencv to record video."
+            raise RecordingError("Install python3-opencv to record video.")
         _, frame = self.latest()
         if frame is None:
-            return None, "The camera has not supplied a frame yet."
+            raise RecordingError("The camera has not supplied a frame yet.")
 
-        capture_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            capture_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            raise RecordingError(f"Could not create the capture directory: {error}") from error
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         height, width = frame.shape[:2]
         candidates = [
@@ -100,17 +117,20 @@ class CameraWorker:
             while path.exists():
                 path = base_path.with_name(f"{base_path.stem}_{sequence:03d}{base_path.suffix}")
                 sequence += 1
-            writer = cv2.VideoWriter(
-                str(path), cv2.VideoWriter_fourcc(*codec), self.fps, (width, height)
-            )
+            try:
+                writer = cv2.VideoWriter(
+                    str(path), cv2.VideoWriter_fourcc(*codec), self.fps, (width, height)
+                )
+            except Exception as error:
+                raise RecordingError(f"Could not initialize the video writer: {error}") from error
             if writer.isOpened():
                 with self._record_lock:
                     self._writer = writer
                     self._recording = True
                     self.output_path = path
-                return path, ""
+                return path
             writer.release()
-        return None, "ServeScan could not create an MP4 or AVI video file."
+        raise RecordingError("ServeScan could not create an MP4 or AVI video file.")
 
     def set_recording(self, recording: bool) -> None:
         with self._record_lock:

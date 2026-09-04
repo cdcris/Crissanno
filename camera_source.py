@@ -1,13 +1,17 @@
 """Camera source interface for ServeScan."""
 
+from abc import ABC, abstractmethod
 
-class CameraSource:
+
+class CameraSource(ABC):
     """Small interface for an RGB camera source."""
 
     name = "Camera"
 
+    @abstractmethod
     def read_rgb(self):
-        raise NotImplementedError
+        """Return the next RGB frame, or ``None`` when no frame is ready."""
 
+    @abstractmethod
     def close(self) -> None:
-        raise NotImplementedError
+        """Release resources owned by the source."""
