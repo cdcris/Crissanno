@@ -32,6 +32,7 @@ class CameraWorker:
         self._stop = threading.Event()
         self._writer = None
         self._recording = False
+        self._marker_position: Optional[tuple[int, int]] = None
         self.output_path: Optional[Path] = None
         self._thread = threading.Thread(target=self._run, daemon=True)
 
@@ -51,7 +52,10 @@ class CameraWorker:
                     self._frame_number += 1
                 with self._record_lock:
                     if self._recording and self._writer is not None and cv2 is not None:
-                        self._writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+                        video_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                        if self._marker_position is not None:
+                            self._draw_recording_marker(video_frame, self._marker_position)
+                        self._writer.write(video_frame)
         except Exception as exc:
             self.error = str(exc)
         finally:
@@ -64,6 +68,16 @@ class CameraWorker:
     def latest(self):
         with self._lock:
             return self._frame_number, self._frame
+
+    def _draw_recording_marker(self, frame, position: tuple[int, int]) -> None:
+        """Draw the preview marker onto a BGR video frame in place."""
+        marker_x, marker_y = position
+        height, width = frame.shape[:2]
+        video_x = min(width - 1, max(0, round(marker_x * width / self.size[0])))
+        video_y = min(height - 1, max(0, round(marker_y * height / self.size[1])))
+        cv2.line(frame, (0, video_y), (width - 1, video_y), (28, 38, 218), 4)
+        cv2.circle(frame, (video_x, video_y), 6, (255, 255, 255), -1)
+        cv2.circle(frame, (video_x, video_y), 6, (28, 38, 218), 2)
 
     def start_recording(self, capture_dir: Path) -> tuple[Optional[Path], str]:
         """Start a timestamped recording and return (path, error_message)."""
@@ -101,6 +115,11 @@ class CameraWorker:
     def set_recording(self, recording: bool) -> None:
         with self._record_lock:
             self._recording = recording and self._writer is not None
+
+    def set_marker_position(self, position: Optional[tuple[int, int]]) -> None:
+        """Set the camera-space marker burned into subsequently recorded frames."""
+        with self._record_lock:
+            self._marker_position = position
 
     def stop_recording(self) -> Optional[Path]:
         with self._record_lock:

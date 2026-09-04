@@ -27,3 +27,9 @@ Press **Capture** to begin, use the same button to pause/resume, and press
 using a timestamp such as `2026-09-04_14-32-08.mp4`. Space toggles
 capture/pause/resume; Escape stops and saves. Press F11 to enter or leave
 full-screen mode on the 7-inch display.
+
+Click anywhere inside the camera preview to place the horizontal reference
+line. Its position is shown as native camera coordinates (`x`, `y`) and is
+saved to `marker_position.json`, so it is restored the next time ServeScan
+starts. The line and its selected point are also drawn into every saved video
+frame; moving the line while recording updates subsequent frames.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 import tkinter as tk
@@ -27,6 +28,7 @@ APP_TITLE = "ServeScan"
 WINDOW_SIZE = "1024x600"
 CAMERA_SIZE = (1280, 720)
 CAMERA_FPS = 30
+MARKER_PATH = Path(__file__).with_name("marker_position.json")
 
 
 class ServeScanApp(tk.Tk):
@@ -47,6 +49,7 @@ class ServeScanApp(tk.Tk):
         self.preview_photo = None
         self.preview_image_id = None
         self.last_rgb_frame = None
+        self.marker_position = self._load_marker_position()
         self.camera_reported = False
         self.closing = False
 
@@ -57,6 +60,7 @@ class ServeScanApp(tk.Tk):
         self.bind("<F11>", self._toggle_fullscreen)
 
         self.camera = CameraWorker(CAMERA_SIZE, CAMERA_FPS)
+        self.camera.set_marker_position(self.marker_position)
         self.camera.start()
         self.after(40, self._update_preview)
         self.after(200, self._update_elapsed)
@@ -119,6 +123,8 @@ class ServeScanApp(tk.Tk):
         )
         self.preview.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
         self.preview.bind("<Configure>", lambda _event: self._render_preview())
+        self.preview.bind("<Button-1>", self._set_marker_position)
+        self.preview.configure(cursor="crosshair")
         self._render_preview()
 
         controls = tk.Frame(self, bg=COLORS["surface"], height=90)
@@ -173,13 +179,64 @@ class ServeScanApp(tk.Tk):
         save_box = tk.Frame(controls, bg=COLORS["surface"])
         save_box.grid(row=0, column=3, sticky="e", padx=(12, 22))
         tk.Label(
-            save_box, text="SAVES TO", bg=COLORS["surface"], fg=COLORS["text_muted"],
+            save_box, text="LINE POSITION", bg=COLORS["surface"], fg=COLORS["text_muted"],
             font=(FONT_FAMILY, 7, "bold"),
         ).pack(anchor="e")
-        tk.Label(
-            save_box, text="./captures", bg=COLORS["surface"], fg=COLORS["text"],
+        self.position_label = tk.Label(
+            save_box, text=self._marker_text(), bg=COLORS["surface"], fg=COLORS["text"],
             font=(MONO_FONT_FAMILY, 9),
-        ).pack(anchor="e")
+        )
+        self.position_label.pack(anchor="e")
+
+    @staticmethod
+    def _load_marker_position() -> tuple[int, int] | None:
+        try:
+            data = json.loads(MARKER_PATH.read_text(encoding="utf-8"))
+            x, y = int(data["x"]), int(data["y"])
+            if 0 <= x < CAMERA_SIZE[0] and 0 <= y < CAMERA_SIZE[1]:
+                return x, y
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+            pass
+        return None
+
+    def _marker_text(self) -> str:
+        if self.marker_position is None:
+            return "Click preview"
+        x, y = self.marker_position
+        return f"x: {x}  y: {y}"
+
+    @staticmethod
+    def _preview_bounds(width: int, height: int) -> tuple[float, float, float, float]:
+        scale = min(width / CAMERA_SIZE[0], height / CAMERA_SIZE[1])
+        image_width = CAMERA_SIZE[0] * scale
+        image_height = CAMERA_SIZE[1] * scale
+        return (
+            (width - image_width) / 2,
+            (height - image_height) / 2,
+            image_width,
+            image_height,
+        )
+
+    def _set_marker_position(self, event: tk.Event) -> None:
+        width = max(self.preview.winfo_width(), 1)
+        height = max(self.preview.winfo_height(), 1)
+        left, top, image_width, image_height = self._preview_bounds(width, height)
+        if not (left <= event.x <= left + image_width and top <= event.y <= top + image_height):
+            return
+
+        x = min(CAMERA_SIZE[0] - 1, max(0, round((event.x - left) * CAMERA_SIZE[0] / image_width)))
+        y = min(CAMERA_SIZE[1] - 1, max(0, round((event.y - top) * CAMERA_SIZE[1] / image_height)))
+        self.marker_position = (x, y)
+        self.camera.set_marker_position(self.marker_position)
+        self.position_label.configure(text=self._marker_text())
+        try:
+            MARKER_PATH.write_text(
+                json.dumps({"x": x, "y": y}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            self.detail_label.configure(text=f"Could not save line position: {exc}")
+        self._render_preview()
 
     def _toggle_fullscreen(self, _event=None) -> None:
         self.attributes("-fullscreen", not bool(self.attributes("-fullscreen")))
@@ -211,6 +268,28 @@ class ServeScanApp(tk.Tk):
                 text="WAITING FOR CAMERA",
                 fill=COLORS["preview_text"],
                 font=(FONT_FAMILY, 9, "bold"),
+            )
+
+        if self.marker_position is not None:
+            marker_x, marker_y = self.marker_position
+            left, top, image_width, image_height = self._preview_bounds(width, height)
+            canvas_x = left + marker_x * image_width / CAMERA_SIZE[0]
+            canvas_y = top + marker_y * image_height / CAMERA_SIZE[1]
+            canvas.create_line(
+                left, canvas_y, left + image_width, canvas_y,
+                fill=COLORS["primary"], width=3,
+            )
+            canvas.create_oval(
+                canvas_x - 5, canvas_y - 5, canvas_x + 5, canvas_y + 5,
+                fill=COLORS["white"], outline=COLORS["primary"], width=2,
+            )
+            canvas.create_text(
+                left + 10,
+                canvas_y - 9 if canvas_y >= top + 30 else canvas_y + 10,
+                text=f"x: {marker_x}  y: {marker_y}",
+                anchor="sw" if canvas_y >= top + 30 else "nw",
+                fill=COLORS["white"],
+                font=(MONO_FONT_FAMILY, 9, "bold"),
             )
 
         if self.state_name in (self.RECORDING, self.PAUSED):
