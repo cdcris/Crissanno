@@ -93,8 +93,13 @@ class TouchButton(tk.Canvas):
         if width < 105:
             return None, width / 2, 8, "center"
         if width < 145:
-            return 20, 39, 10, "w"
-        return 30, 53, 12, "w"
+            return 20, width / 2, 10, "center"
+        return 30, width / 2, 12, "center"
+
+    @staticmethod
+    def show_icon(icon: str, width: int) -> bool:
+        """Hide the wide mode-switch icon when it would overlap its label."""
+        return not (icon == "switch" and width < 165)
 
     def draw(self, color: Optional[str] = None) -> None:
         self.delete("all")
@@ -105,6 +110,8 @@ class TouchButton(tk.Canvas):
         self._round_rect(2, 2, width - 2, height - 2, 14, fill=fill, outline="")
         icon_color = COLORS["white"] if self.enabled else COLORS["text_muted"]
         cx, text_x, font_size, text_anchor = self.content_layout(width)
+        if not self.show_icon(self.icon, width):
+            cx = None
         cy = height / 2
         if cx is None:
             pass
