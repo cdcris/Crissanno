@@ -170,6 +170,19 @@ class AppLogicTests(unittest.TestCase):
         instance.capture_control.stop.assert_called_once_with()
         instance.ui.set_elapsed.assert_called_with(0)
 
+    def test_stop_capture_reports_detection_fallback(self):
+        instance = bare_app(ServeScanApp.RECORDING)
+        instance.capture_control.stop.return_value = app_module.Path(
+            "captures/test.mp4"
+        )
+        instance.camera.detection_error = "model failed"
+
+        instance.stop_capture()
+
+        message = instance.ui.set_detail.call_args.args[0]
+        self.assertIn("Saved line + 0.50× speed", message)
+        self.assertIn("detection unavailable", message)
+
 
 class TouchButtonLogicTests(unittest.TestCase):
     def test_invoke_only_calls_command_when_enabled(self):

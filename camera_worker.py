@@ -28,12 +28,15 @@ class CameraWorker:
         fps: int,
         error_log: ErrorLog | None = None,
         playback_speed: float = 0.5,
+        detector=None,
     ) -> None:
         if playback_speed <= 0:
             raise ValueError("Playback speed must be greater than zero.")
         self.size = size
         self.fps = fps
         self.playback_speed = playback_speed
+        self.detector = detector
+        self.detection_error = ""
         self.source: Optional[CameraSource] = None
         self.error = ""
         self.errors = ErrorHandler(error_log=error_log)
@@ -65,8 +68,17 @@ class CameraWorker:
                 with self._record_lock:
                     if self._recording and self._writer is not None and cv2 is not None:
                         video_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                        # Preserve capture priorities: draw the reference first;
+                        # slow motion is set on the writer; detection comes last.
                         if self._marker_position is not None:
                             self._draw_recording_marker(video_frame, self._marker_position)
+                        if self.detector is not None:
+                            try:
+                                video_frame = self.detector.annotate(video_frame)
+                            except Exception as error:
+                                self.detection_error = str(error)
+                                self.errors.handle(error, "Object detection error")
+                                self.detector = None
                         self._writer.write(video_frame)
         except CameraError as error:
             self.error = str(error)

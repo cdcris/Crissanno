@@ -1,5 +1,7 @@
 __pycache__/
 *.py[cod]
+
 captures/
+vid/
+
 logs/
-marker_position.json

@@ -18,6 +18,7 @@ from error_log import get_error_log
 from errors import ErrorHandler
 from marker_store import MarkerStore
 from control_video_upload import VideoUploadController
+from detect import ObjectDetector
 
 
 APP_TITLE = "ServeScan"
@@ -67,6 +68,7 @@ class ServeScanApp(tk.Tk):
             CAMERA_FPS,
             self.error_log,
             playback_speed=SLOW_MOTION_SPEED,
+            detector=ObjectDetector(),
         )
         self.capture_control = CaptureController(
             self.camera, self.errors, Path.cwd() / "captures"
@@ -218,7 +220,15 @@ class ServeScanApp(tk.Tk):
                 shown = saved_path.relative_to(Path.cwd())
             except ValueError:
                 shown = saved_path
-            self.ui.set_detail(f"Saved at {SLOW_MOTION_SPEED:.2f}× speed • {shown}")
+            if self.camera.detection_error:
+                self.ui.set_detail(
+                    f"Saved line + {SLOW_MOTION_SPEED:.2f}× speed; "
+                    f"detection unavailable • {shown}"
+                )
+            else:
+                self.ui.set_detail(
+                    f"Saved line + {SLOW_MOTION_SPEED:.2f}× + detection • {shown}"
+                )
 
     def close(self) -> None:
         self.closing = True

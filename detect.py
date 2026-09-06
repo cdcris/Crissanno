@@ -1,7 +1,15 @@
 from pathlib import Path
+from typing import Any
 
-import cv2
-from ultralytics import YOLO
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
+try:
+    from ultralytics import YOLO
+except ImportError:  # Keep the recorder usable when detection is unavailable.
+    YOLO = None
 
 
 # Configuration
@@ -15,8 +23,12 @@ DISPLAY_WIDTH = 640
 WINDOW_NAME = "Detector"
 
 
-def load_model(model_dir: Path) -> YOLO:
+def load_model(model_dir: Path) -> Any:
     """Validate and load the exported NCNN model."""
+    if YOLO is None:
+        raise RuntimeError(
+            "Object detection requires the 'ultralytics' Python package."
+        )
     if not model_dir.is_dir():
         raise FileNotFoundError(
             f"NCNN model directory not found: {model_dir}\n"
@@ -35,7 +47,36 @@ def load_model(model_dir: Path) -> YOLO:
         ) from exc
 
 
+class ObjectDetector:
+    """Lazily load YOLO and annotate BGR frames for saved captures."""
+
+    def __init__(
+        self,
+        model_dir: Path = MODEL_DIR,
+        confidence: float = CONFIDENCE,
+    ) -> None:
+        self.model_dir = model_dir
+        self.confidence = confidence
+        self.model = None
+
+    def annotate(self, frame):
+        """Return a frame with detected objects boxed and labelled."""
+        if self.model is None:
+            self.model = load_model(self.model_dir)
+
+        results = self.model.predict(
+            source=frame,
+            conf=self.confidence,
+            verbose=False,
+        )
+        if not results:
+            return frame
+        return results[0].plot()
+
+
 def main() -> None:
+    if cv2 is None:
+        raise RuntimeError("OpenCV is required to run the detector viewer.")
     if not VIDEO_PATH.is_file():
         raise FileNotFoundError(f"Video file not found: {VIDEO_PATH}")
 

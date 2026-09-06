@@ -29,8 +29,10 @@ capture/pause/resume; Escape stops and saves. Press F11 to enter or leave
 full-screen mode on the 7-inch display.
 
 Saved captures automatically play at 0.50× speed (2× slow motion). Every
-captured frame is retained, including the horizontal reference line and its
-selected point.
+captured frame retains the horizontal reference line and its selected point,
+then object-detection boxes and labels are added using the bundled NCNN model.
+Processing follows that priority, so a detection error does not prevent the
+line or slow-motion video from being saved.
 
 The interface starts in **Capture Mode**, where the Capture and Stop & Save
 controls are available. Select **Upload Mode** to show the separate Upload

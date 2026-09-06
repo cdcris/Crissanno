@@ -190,6 +190,55 @@ class CameraWorkerTests(unittest.TestCase):
         cv.line.assert_called_once_with(frame, (0, 0), (639, 0), (28, 38, 218), 4)
         self.assertEqual(cv.circle.call_count, 2)
 
+    def test_recording_applies_detection_after_horizontal_line(self):
+        frame = np.zeros((10, 20, 3), dtype=np.uint8)
+        detector = Mock()
+        detector.annotate.return_value = "detected-frame"
+        worker = CameraWorker((20, 10), 30, detector=detector)
+        worker._marker_position = (5, 6)
+        writer = FakeWriter()
+        worker._writer = writer
+        worker._recording = True
+        source = Mock()
+        source.read_rgb.side_effect = [frame, CameraReadError("done")]
+        cv = fake_cv2()
+        cv.cvtColor.side_effect = lambda value, _code: value
+
+        with patch.object(camera_worker, "cv2", cv), patch.object(
+            camera_worker, "open_usb_camera", return_value=source
+        ):
+            worker._run()
+
+        cv.line.assert_called_once()
+        detector.annotate.assert_called_once_with(frame)
+        self.assertEqual(writer.frames, ["detected-frame"])
+
+    def test_detection_failure_does_not_prevent_recording(self):
+        frame = np.zeros((10, 20, 3), dtype=np.uint8)
+        detector = Mock()
+        detector.annotate.side_effect = RuntimeError("model failed")
+        error_log = Mock()
+        worker = CameraWorker((20, 10), 30, error_log, detector=detector)
+        worker._marker_position = (5, 6)
+        writer = FakeWriter()
+        worker._writer = writer
+        worker._recording = True
+        source = Mock()
+        source.read_rgb.side_effect = [frame, CameraReadError("done")]
+        cv = fake_cv2()
+        cv.cvtColor.side_effect = lambda value, _code: value
+
+        with patch.object(camera_worker, "cv2", cv), patch.object(
+            camera_worker, "open_usb_camera", return_value=source
+        ):
+            worker._run()
+
+        self.assertEqual(writer.frames, [frame])
+        self.assertIsNone(worker.detector)
+        self.assertEqual(worker.detection_error, "model failed")
+        contexts = [call.args[1] for call in error_log.write.call_args_list]
+        self.assertIn("Object detection error", contexts)
+
     def test_run_records_error_and_always_closes_source(self):
         source = Mock()
         source.read_rgb.side_effect = CameraReadError("camera unplugged")
