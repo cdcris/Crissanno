@@ -27,9 +27,13 @@ class CameraWorker:
         size: tuple[int, int],
         fps: int,
         error_log: ErrorLog | None = None,
+        playback_speed: float = 0.5,
     ) -> None:
+        if playback_speed <= 0:
+            raise ValueError("Playback speed must be greater than zero.")
         self.size = size
         self.fps = fps
+        self.playback_speed = playback_speed
         self.source: Optional[CameraSource] = None
         self.error = ""
         self.errors = ErrorHandler(error_log=error_log)
@@ -118,8 +122,9 @@ class CameraWorker:
                 path = base_path.with_name(f"{base_path.stem}_{sequence:03d}{base_path.suffix}")
                 sequence += 1
             try:
+                output_fps = self.fps * self.playback_speed
                 writer = cv2.VideoWriter(
-                    str(path), cv2.VideoWriter_fourcc(*codec), self.fps, (width, height)
+                    str(path), cv2.VideoWriter_fourcc(*codec), output_fps, (width, height)
                 )
             except Exception as error:
                 raise RecordingError(f"Could not initialize the video writer: {error}") from error

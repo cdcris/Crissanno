@@ -148,6 +148,13 @@ class CameraWorkerTests(unittest.TestCase):
 
         self.assertTrue(writer.released)
         self.assertIsNone(self.worker._writer)
+        cv.VideoWriter.assert_called_once_with(
+            str(path), 1234, 15.0, (640, 480)
+        )
+
+    def test_rejects_invalid_playback_speed(self):
+        with self.assertRaisesRegex(ValueError, "greater than zero"):
+            CameraWorker((1280, 720), 30, playback_speed=0)
 
     def test_uses_avi_fallback_and_avoids_existing_name(self):
         self.worker._frame = np.zeros((10, 20, 3), dtype=np.uint8)

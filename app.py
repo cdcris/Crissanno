@@ -23,6 +23,7 @@ APP_TITLE = "ServeScan"
 WINDOW_SIZE = "1024x600"
 CAMERA_SIZE = (1280, 720)
 CAMERA_FPS = 30
+SLOW_MOTION_SPEED = 0.5
 MARKER_PATH = Path(__file__).with_name("marker_position.json")
 
 
@@ -69,7 +70,12 @@ class ServeScanApp(tk.Tk):
         self.bind("<Escape>", lambda _event: self.stop_capture())
         self.bind("<F11>", self._toggle_fullscreen)
 
-        self.camera = CameraWorker(CAMERA_SIZE, CAMERA_FPS, self.error_log)
+        self.camera = CameraWorker(
+            CAMERA_SIZE,
+            CAMERA_FPS,
+            self.error_log,
+            playback_speed=SLOW_MOTION_SPEED,
+        )
         self.camera.set_marker_position(self.marker_position)
         self.camera.start()
         self.after(40, self._update_preview)
@@ -281,7 +287,7 @@ class ServeScanApp(tk.Tk):
                 shown = saved_path.relative_to(Path.cwd())
             except ValueError:
                 shown = saved_path
-            self.ui.set_detail(f"Saved • {shown}")
+            self.ui.set_detail(f"Saved at {SLOW_MOTION_SPEED:.2f}× speed • {shown}")
 
     def close(self) -> None:
         self.closing = True
