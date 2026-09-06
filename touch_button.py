@@ -87,6 +87,15 @@ class TouchButton(tk.Canvas):
         ]
         self.create_polygon(points, smooth=True, **kwargs)
 
+    @staticmethod
+    def content_layout(width: int) -> tuple[float | None, float, int, str]:
+        """Return responsive icon and label geometry for the available width."""
+        if width < 105:
+            return None, width / 2, 8, "center"
+        if width < 145:
+            return 20, 39, 10, "w"
+        return 30, 53, 12, "w"
+
     def draw(self, color: Optional[str] = None) -> None:
         self.delete("all")
         width, height = max(self.winfo_width(), 20), max(self.winfo_height(), 20)
@@ -95,8 +104,11 @@ class TouchButton(tk.Canvas):
             fill = COLORS["surface_soft"]
         self._round_rect(2, 2, width - 2, height - 2, 14, fill=fill, outline="")
         icon_color = COLORS["white"] if self.enabled else COLORS["text_muted"]
-        cx, cy = 30, height / 2
-        if self.icon == "capture":
+        cx, text_x, font_size, text_anchor = self.content_layout(width)
+        cy = height / 2
+        if cx is None:
+            pass
+        elif self.icon == "capture":
             self.create_oval(cx - 10, cy - 10, cx + 10, cy + 10, fill=icon_color, outline="")
             self.create_oval(cx - 5, cy - 5, cx + 5, cy + 5, fill=fill, outline="")
         elif self.icon == "pause":
@@ -109,11 +121,24 @@ class TouchButton(tk.Canvas):
             )
         elif self.icon == "stop":
             self.create_rectangle(cx - 10, cy - 10, cx + 10, cy + 10, fill=icon_color, outline="")
+        elif self.icon == "upload":
+            self.create_line(cx, cy + 11, cx, cy - 9, fill=icon_color, width=3)
+            self.create_line(cx, cy - 9, cx - 7, cy - 2, fill=icon_color, width=3)
+            self.create_line(cx, cy - 9, cx + 7, cy - 2, fill=icon_color, width=3)
+            self.create_line(cx - 10, cy + 5, cx - 10, cy + 12, cx + 10, cy + 12,
+                             cx + 10, cy + 5, fill=icon_color, width=2)
+        elif self.icon == "switch":
+            self.create_line(cx - 10, cy - 6, cx + 8, cy - 6, fill=icon_color, width=2)
+            self.create_line(cx + 8, cy - 6, cx + 3, cy - 11, fill=icon_color, width=2)
+            self.create_line(cx + 8, cy - 6, cx + 3, cy - 1, fill=icon_color, width=2)
+            self.create_line(cx + 10, cy + 6, cx - 8, cy + 6, fill=icon_color, width=2)
+            self.create_line(cx - 8, cy + 6, cx - 3, cy + 1, fill=icon_color, width=2)
+            self.create_line(cx - 8, cy + 6, cx - 3, cy + 11, fill=icon_color, width=2)
         self.create_text(
-            53,
+            text_x,
             cy,
             text=self.label,
-            anchor="w",
+            anchor=text_anchor,
             fill=icon_color,
-            font=(FONT_FAMILY, 12, "bold"),
+            font=(FONT_FAMILY, font_size, "bold"),
         )

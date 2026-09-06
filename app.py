@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import filedialog, messagebox
 
 try:
     import cv2
@@ -42,6 +42,12 @@ class ServeScanApp(tk.Tk):
         self.last_frame_number = -1
         self.last_rgb_frame = None
         self.marker_position = self.errors.protect(self.marker_store.load)
+        self.selected_video_path: Path | None = None
+        self.upload_capture = None
+        self.upload_after_id = None
+        self.upload_rgb_frame = None
+        self.upload_size = CAMERA_SIZE
+        self.upload_fps = CAMERA_FPS
         self.camera_reported = False
         self.closing = False
 
@@ -52,6 +58,8 @@ class ServeScanApp(tk.Tk):
             camera_size=CAMERA_SIZE,
             camera_fps=CAMERA_FPS,
             marker_position=self.marker_position,
+            on_upload_video=self.upload_video,
+            on_mode_changed=self._on_feature_mode_changed,
             on_toggle_capture=self.toggle_capture,
             on_stop_capture=self.stop_capture,
             on_marker_click=self._set_marker_position,
@@ -66,6 +74,83 @@ class ServeScanApp(tk.Tk):
         self.camera.start()
         self.after(40, self._update_preview)
         self.after(200, self._update_elapsed)
+
+    def upload_video(self) -> None:
+        """Let the user choose an existing video for the next processing step."""
+        selected = filedialog.askopenfilename(
+            parent=self,
+            title="Upload video",
+            filetypes=(
+                ("Video files", "*.mp4 *.avi *.mov *.mkv *.m4v *.webm"),
+                ("All files", "*.*"),
+            ),
+        )
+        if not selected:
+            return
+        selected_path = Path(selected)
+        try:
+            self._start_uploaded_video(selected_path)
+        except Exception as error:
+            self.errors.handle(error, "Video upload error")
+            return
+        self.selected_video_path = selected_path
+        self.ui.set_detail(f"Playing • {selected_path.name}")
+
+    def _on_feature_mode_changed(self, mode: str) -> None:
+        if mode == "upload":
+            if self.selected_video_path is not None:
+                try:
+                    self._start_uploaded_video(self.selected_video_path)
+                    self.ui.set_detail(f"Playing • {self.selected_video_path.name}")
+                except Exception as error:
+                    self.errors.handle(error, "Video upload error")
+            else:
+                self.upload_rgb_frame = None
+                self.ui.render_preview(None, self.READY)
+        else:
+            self._stop_uploaded_video()
+            self._render_preview()
+
+    def _start_uploaded_video(self, path: Path) -> None:
+        if cv2 is None:
+            raise RuntimeError("Install python3-opencv to preview uploaded video.")
+        self._stop_uploaded_video()
+        capture = cv2.VideoCapture(str(path))
+        if not capture.isOpened():
+            capture.release()
+            raise RuntimeError(f"Could not open video: {path.name}")
+        fps = float(capture.get(cv2.CAP_PROP_FPS))
+        self.upload_fps = fps if fps > 0 else CAMERA_FPS
+        self.upload_capture = capture
+        self._update_uploaded_video()
+
+    def _update_uploaded_video(self) -> None:
+        self.upload_after_id = None
+        if self.closing or self.ui.feature_mode != "upload" or self.upload_capture is None:
+            return
+        ok, frame = self.upload_capture.read()
+        if not ok:
+            self.ui.set_detail("Uploaded video finished")
+            return
+        height, width = frame.shape[:2]
+        self.upload_size = (width, height)
+        self.upload_rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        self.ui.render_preview(
+            self.upload_rgb_frame, self.READY, self.upload_size, round(self.upload_fps, 1)
+        )
+        delay_ms = max(15, round(1000 / self.upload_fps))
+        self.upload_after_id = self.after(delay_ms, self._update_uploaded_video)
+
+    def _stop_uploaded_video(self) -> None:
+        if self.upload_after_id is not None:
+            try:
+                self.after_cancel(self.upload_after_id)
+            except tk.TclError:
+                pass
+            self.upload_after_id = None
+        if self.upload_capture is not None:
+            self.upload_capture.release()
+            self.upload_capture = None
 
     def report_callback_exception(self, exc_type, exc_value, exc_traceback) -> None:
         """Log exceptions raised by Tk event and timer callbacks."""
@@ -83,7 +168,10 @@ class ServeScanApp(tk.Tk):
     def _set_marker_position(
         self, canvas_x: int, canvas_y: int, width: int, height: int
     ) -> None:
-        left, top, image_width, image_height = self._preview_bounds(width, height)
+        media_size = self.upload_size if self.ui.feature_mode == "upload" else CAMERA_SIZE
+        left, top, image_width, image_height = ServeScanUI.preview_bounds(
+            width, height, media_size
+        )
         if not (
             left <= canvas_x <= left + image_width
             and top <= canvas_y <= top + image_height
@@ -112,7 +200,12 @@ class ServeScanApp(tk.Tk):
         self.attributes("-fullscreen", not bool(self.attributes("-fullscreen")))
 
     def _render_preview(self) -> None:
-        self.ui.render_preview(self.last_rgb_frame, self.state_name)
+        if self.ui.feature_mode == "upload":
+            self.ui.render_preview(
+                self.upload_rgb_frame, self.READY, self.upload_size, round(self.upload_fps, 1)
+            )
+        else:
+            self.ui.render_preview(self.last_rgb_frame, self.state_name)
 
     def _update_preview(self) -> None:
         if self.closing:
@@ -133,6 +226,8 @@ class ServeScanApp(tk.Tk):
         self.after(33, self._update_preview)
 
     def toggle_capture(self) -> None:
+        if self.ui.feature_mode != "capture":
+            return
         if self.last_rgb_frame is None:
             self.ui.set_detail("Waiting for a camera frame...")
             return
@@ -190,6 +285,7 @@ class ServeScanApp(tk.Tk):
 
     def close(self) -> None:
         self.closing = True
+        self._stop_uploaded_video()
         if self.state_name != self.READY:
             self.stop_capture()
         self.camera.stop()

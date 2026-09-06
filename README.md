@@ -28,6 +28,15 @@ using a timestamp such as `2026-09-04_14-32-08.mp4`. Space toggles
 capture/pause/resume; Escape stops and saves. Press F11 to enter or leave
 full-screen mode on the 7-inch display.
 
+The interface starts in **Capture Mode**, where the Capture and Stop & Save
+controls are available. Select **Upload Mode** to show the separate Upload
+Video control, which accepts MP4, AVI, MOV, MKV, M4V, or WebM files. Use the
+same mode switch to return to camera capture.
+
+An uploaded video plays directly in the main preview in place of the live
+camera. Camera capture controls are unavailable in Upload Mode, while the
+horizontal reference line remains visible and can still be repositioned.
+
 Click anywhere inside the camera preview to place the horizontal reference
 line. Its position is shown as native camera coordinates (`x`, `y`) and is
 saved to `marker_position.json`, so it is restored the next time ServeScan

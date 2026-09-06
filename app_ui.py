@@ -27,6 +27,8 @@ class ServeScanUI:
         camera_size: tuple[int, int],
         camera_fps: int,
         marker_position: tuple[int, int] | None,
+        on_upload_video: Callable[[], None],
+        on_mode_changed: Callable[[str], None],
         on_toggle_capture: Callable[[], None],
         on_stop_capture: Callable[[], None],
         on_marker_click: Callable[[int, int, int, int], None],
@@ -38,15 +40,20 @@ class ServeScanUI:
         self.preview_photo = None
         self.rgb_frame = None
         self.capture_state = "ready"
+        self.feature_mode = "capture"
+        self.media_size = camera_size
+        self.media_fps = camera_fps
+        self.on_mode_changed = on_mode_changed
 
         root.title(title)
         root.geometry(window_size)
         root.minsize(800, 480)
         self.theme = ServeScanTheme(root)
-        self._build(on_toggle_capture, on_stop_capture, on_marker_click)
+        self._build(on_upload_video, on_toggle_capture, on_stop_capture, on_marker_click)
 
     def _build(
         self,
+        on_upload_video: Callable[[], None],
         on_toggle_capture: Callable[[], None],
         on_stop_capture: Callable[[], None],
         on_marker_click: Callable[[int, int, int, int], None],
@@ -72,10 +79,11 @@ class ServeScanUI:
             title_box, text="SERVESCAN", bg=COLORS["surface"], fg=COLORS["text"],
             font=(FONT_FAMILY, 15, "bold"),
         ).pack(anchor="w")
-        tk.Label(
+        self.feature_label = tk.Label(
             title_box, text="CAMERA CAPTURE", bg=COLORS["surface"], fg=COLORS["text_muted"],
             font=(FONT_FAMILY, 8, "bold"),
-        ).pack(anchor="w")
+        )
+        self.feature_label.pack(anchor="w")
 
         self.header_status = tk.Label(
             header, text="  READY  ", bg=COLORS["surface_soft"], fg=COLORS["text_muted"],
@@ -110,7 +118,10 @@ class ServeScanUI:
         controls.grid(row=2, column=0, sticky="ew")
         controls.grid_propagate(False)
         controls.columnconfigure(0, weight=1)
-        controls.columnconfigure(3, weight=1)
+        controls.columnconfigure(1, weight=1, minsize=110, uniform="action")
+        controls.columnconfigure(2, weight=1, minsize=110, uniform="action")
+        controls.columnconfigure(3, weight=1, minsize=110, uniform="action")
+        controls.columnconfigure(4, weight=1)
 
         info = tk.Frame(controls, bg=COLORS["surface"])
         info.grid(row=0, column=0, sticky="w", padx=(22, 12))
@@ -125,22 +136,35 @@ class ServeScanUI:
         )
         self.detail_label.pack(anchor="w")
 
+        self.mode_button = TouchButton(
+            controls, text="Upload Mode", icon="switch", command=self.toggle_feature_mode,
+            color=COLORS["text_muted"], hover=COLORS["text"], width=110,
+        )
+        self.mode_button.grid(row=0, column=1, sticky="ew", padx=6, pady=13)
+
+        self.upload_button = TouchButton(
+            controls, text="Upload Video", icon="upload", command=on_upload_video,
+            color=COLORS["primary"], hover=COLORS["primary_hover"], width=110,
+        )
+        self.upload_button.grid(row=0, column=2, columnspan=2, sticky="ew", padx=6, pady=13)
+
         self.capture_button = TouchButton(
             controls, text="Capture", icon="capture", command=on_toggle_capture,
-            color=COLORS["primary"], hover=COLORS["primary_hover"], width=210,
+            color=COLORS["primary"], hover=COLORS["primary_hover"], width=110,
         )
-        self.capture_button.grid(row=0, column=1, padx=6, pady=13)
+        self.capture_button.grid(row=0, column=2, sticky="ew", padx=6, pady=13)
         self.capture_button.set_enabled(False)
 
         self.stop_button = TouchButton(
             controls, text="Stop & Save", icon="stop", command=on_stop_capture,
-            color=COLORS["danger"], hover=COLORS["danger_hover"], width=170,
+            color=COLORS["danger"], hover=COLORS["danger_hover"], width=110,
         )
-        self.stop_button.grid(row=0, column=2, padx=6, pady=13)
+        self.stop_button.grid(row=0, column=3, sticky="ew", padx=6, pady=13)
         self.stop_button.set_enabled(False)
+        self.upload_button.grid_remove()
 
         save_box = tk.Frame(controls, bg=COLORS["surface"])
-        save_box.grid(row=0, column=3, sticky="e", padx=(12, 22))
+        save_box.grid(row=0, column=4, sticky="e", padx=(12, 22))
         tk.Label(
             save_box, text="LINE POSITION", bg=COLORS["surface"], fg=COLORS["text_muted"],
             font=(FONT_FAMILY, 7, "bold"),
@@ -184,12 +208,38 @@ class ServeScanUI:
         self.position_label.configure(text=self.marker_text(marker_position))
 
     def set_camera_connected(self, source_name: str, capture_enabled: bool) -> None:
-        self.set_detail(f"{source_name} connected")
+        if self.feature_mode == "capture":
+            self.set_detail(f"{source_name} connected")
         self.capture_button.set_enabled(capture_enabled)
 
     def set_camera_unavailable(self) -> None:
-        self.set_detail("Camera unavailable")
+        if self.feature_mode == "capture":
+            self.set_detail("Camera unavailable")
         self.capture_button.set_enabled(False)
+
+    def toggle_feature_mode(self) -> None:
+        """Switch between the separate capture and upload controls."""
+        if self.feature_mode == "capture":
+            self.feature_mode = "upload"
+            self.capture_button.grid_remove()
+            self.stop_button.grid_remove()
+            self.upload_button.grid()
+            self.mode_button.configure_content(
+                "Capture Mode", "switch", COLORS["text_muted"], COLORS["text"]
+            )
+            self.feature_label.configure(text="VIDEO UPLOAD")
+            self.set_detail("Choose an existing video to upload")
+        else:
+            self.feature_mode = "capture"
+            self.upload_button.grid_remove()
+            self.capture_button.grid()
+            self.stop_button.grid()
+            self.mode_button.configure_content(
+                "Upload Mode", "switch", COLORS["text_muted"], COLORS["text"]
+            )
+            self.feature_label.configure(text="CAMERA CAPTURE")
+            self.set_detail("Ready for camera capture")
+        self.on_mode_changed(self.feature_mode)
 
     def sync_capture_state(self, state: str) -> None:
         if state == "ready":
@@ -200,12 +250,16 @@ class ServeScanUI:
                 "Capture", "capture", COLORS["primary"], COLORS["primary_hover"]
             )
             self.stop_button.set_enabled(False)
+            self.upload_button.set_enabled(True)
+            self.mode_button.set_enabled(True)
         elif state == "recording":
             self.header_status.configure(text="  ● RECORDING  ", bg=COLORS["danger"], fg=COLORS["white"])
             self.capture_button.configure_content(
                 "Pause", "pause", COLORS["warning"], COLORS["warning_hover"]
             )
             self.stop_button.set_enabled(True)
+            self.upload_button.set_enabled(False)
+            self.mode_button.set_enabled(False)
             self.set_detail("Recording in progress")
         else:
             self.header_status.configure(text="  Ⅱ PAUSED  ", bg=COLORS["warning"], fg=COLORS["white"])
@@ -213,11 +267,21 @@ class ServeScanUI:
                 "Resume", "resume", COLORS["success"], COLORS["success_hover"]
             )
             self.stop_button.set_enabled(True)
+            self.upload_button.set_enabled(False)
+            self.mode_button.set_enabled(False)
             self.set_detail("Capture paused • press Resume to continue")
 
-    def render_preview(self, rgb_frame, state: str) -> None:
+    def render_preview(
+        self,
+        rgb_frame,
+        state: str,
+        media_size: tuple[int, int] | None = None,
+        media_fps: int | float | None = None,
+    ) -> None:
         self.rgb_frame = rgb_frame
         self.capture_state = state
+        self.media_size = media_size or self.camera_size
+        self.media_fps = media_fps or self.camera_fps
         self._redraw_preview()
 
     def _redraw_preview(self) -> None:
@@ -246,7 +310,7 @@ class ServeScanUI:
 
         if self.marker_position is not None:
             marker_x, marker_y = self.marker_position
-            left, top, image_width, image_height = self.preview_bounds(width, height, self.camera_size)
+            left, top, image_width, image_height = self.preview_bounds(width, height, self.media_size)
             camera_width, camera_height = self.camera_size
             canvas_x = left + marker_x * image_width / camera_width
             canvas_y = top + marker_y * image_height / camera_height
@@ -275,6 +339,6 @@ class ServeScanUI:
             )
         canvas.create_text(
             width - 18, height - 17,
-            text=f"{self.camera_size[0]} × {self.camera_size[1]}  •  {self.camera_fps} FPS",
+            text=f"{self.media_size[0]} × {self.media_size[1]}  •  {self.media_fps:g} FPS",
             anchor="e", fill=COLORS["preview_text"], font=(MONO_FONT_FAMILY, 8),
         )

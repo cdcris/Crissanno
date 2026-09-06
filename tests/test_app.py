@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 import app as app_module
 import servescan
 from app import ServeScanApp
+from app_ui import ServeScanUI
 from errors import ErrorHandler, RecordingError
 from touch_button import TouchButton
 
@@ -19,6 +20,7 @@ def bare_app(state=ServeScanApp.READY):
     instance.errors = ErrorHandler()
     instance._sync_state_ui = Mock()
     instance.ui = Mock()
+    instance.ui.feature_mode = "capture"
     return instance
 
 
@@ -74,6 +76,61 @@ class AppLogicTests(unittest.TestCase):
         instance.camera.start_recording.assert_not_called()
         instance.ui.set_detail.assert_called_with("Waiting for a camera frame...")
 
+    def test_upload_mode_does_not_allow_camera_capture(self):
+        instance = bare_app()
+        instance.ui.feature_mode = "upload"
+
+        instance.toggle_capture()
+
+        instance.camera.start_recording.assert_not_called()
+        self.assertEqual(instance.state_name, instance.READY)
+
+    def test_upload_video_opens_picker_and_remembers_selection(self):
+        instance = bare_app()
+        with patch.object(
+            app_module.filedialog, "askopenfilename", return_value="C:/videos/serve.mp4"
+        ) as picker, patch.object(instance, "_start_uploaded_video") as start_video:
+            instance.upload_video()
+
+        picker.assert_called_once()
+        self.assertEqual(instance.selected_video_path, app_module.Path("C:/videos/serve.mp4"))
+        start_video.assert_called_once_with(app_module.Path("C:/videos/serve.mp4"))
+        instance.ui.set_detail.assert_called_with("Playing • serve.mp4")
+
+    def test_cancel_upload_keeps_existing_selection(self):
+        instance = bare_app()
+        instance.selected_video_path = app_module.Path("existing.mp4")
+        with patch.object(app_module.filedialog, "askopenfilename", return_value=""):
+            instance.upload_video()
+
+        self.assertEqual(instance.selected_video_path, app_module.Path("existing.mp4"))
+        instance.ui.set_detail.assert_not_called()
+
+    def test_uploaded_frame_replaces_camera_preview(self):
+        instance = bare_app()
+        instance.ui.feature_mode = "upload"
+        instance.closing = False
+        instance.upload_after_id = None
+        instance.upload_fps = 25.0
+        frame = SimpleNamespace(shape=(360, 640, 3))
+        instance.upload_capture = Mock()
+        instance.upload_capture.read.return_value = (True, frame)
+        instance.after = Mock(return_value="upload-timer")
+        fake_cv = SimpleNamespace(
+            COLOR_BGR2RGB=1,
+            cvtColor=Mock(return_value="uploaded-rgb"),
+        )
+
+        with patch.object(app_module, "cv2", fake_cv):
+            instance._update_uploaded_video()
+
+        self.assertEqual(instance.upload_rgb_frame, "uploaded-rgb")
+        self.assertEqual(instance.upload_size, (640, 360))
+        instance.ui.render_preview.assert_called_once_with(
+            "uploaded-rgb", instance.READY, (640, 360), 25.0
+        )
+        instance.after.assert_called_once_with(40, instance._update_uploaded_video)
+
     def test_elapsed_counts_only_active_segments(self):
         instance = bare_app(ServeScanApp.RECORDING)
         instance.recorded_seconds = 4.0
@@ -117,6 +174,40 @@ class TouchButtonLogicTests(unittest.TestCase):
         button.enabled = True
         button.invoke()
         button.command.assert_called_once_with()
+
+    def test_content_layout_compacts_for_narrow_buttons(self):
+        self.assertEqual(TouchButton.content_layout(180), (30, 53, 12, "w"))
+        self.assertEqual(TouchButton.content_layout(120), (20, 39, 10, "w"))
+        self.assertEqual(TouchButton.content_layout(90), (None, 45, 8, "center"))
+
+
+class InterfaceModeTests(unittest.TestCase):
+    def test_capture_is_default_and_mode_switch_separates_controls(self):
+        ui = ServeScanUI.__new__(ServeScanUI)
+        ui.feature_mode = "capture"
+        ui.capture_button = Mock()
+        ui.stop_button = Mock()
+        ui.upload_button = Mock()
+        ui.mode_button = Mock()
+        ui.feature_label = Mock()
+        ui.set_detail = Mock()
+        ui.on_mode_changed = Mock()
+
+        ui.toggle_feature_mode()
+        self.assertEqual(ui.feature_mode, "upload")
+        ui.capture_button.grid_remove.assert_called_once_with()
+        ui.stop_button.grid_remove.assert_called_once_with()
+        ui.upload_button.grid.assert_called_once_with()
+        ui.feature_label.configure.assert_called_with(text="VIDEO UPLOAD")
+        ui.on_mode_changed.assert_called_with("upload")
+
+        ui.toggle_feature_mode()
+        self.assertEqual(ui.feature_mode, "capture")
+        ui.upload_button.grid_remove.assert_called_once_with()
+        ui.capture_button.grid.assert_called_once_with()
+        ui.stop_button.grid.assert_called_once_with()
+        ui.feature_label.configure.assert_called_with(text="CAMERA CAPTURE")
+        ui.on_mode_changed.assert_called_with("capture")
 
 
 class EntryPointTests(unittest.TestCase):
