@@ -1,22 +1,24 @@
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-import app as app_module
-import servescan
+import main
+import upload.controller as video_upload_module
 from app import ServeScanApp
-from app_ui import ServeScanUI
-from control_capture import CaptureController
-from errors import ErrorHandler, RecordingError
-from touch_button import TouchButton
-import control_video_upload as video_upload_module
-from control_video_upload import VideoUploadController
+from capture.controller import CaptureController
+from capture.state import CaptureState
+from shared.errors import ErrorHandler, RecordingError
+from ui.touch_button import TouchButton
+from ui.window import ServeScanUI
+from upload.controller import VideoUploadController
 
 
-def bare_app(state=ServeScanApp.READY):
+def bare_app(state=CaptureState.READY):
     instance = ServeScanApp.__new__(ServeScanApp)
     instance.last_rgb_frame = object()
     instance.camera = Mock()
+    instance.frame_processor = Mock()
     instance.errors = ErrorHandler()
     instance._sync_state_ui = Mock()
     instance.ui = Mock()
@@ -28,55 +30,42 @@ def bare_app(state=ServeScanApp.READY):
 
 
 class AppLogicTests(unittest.TestCase):
-    def test_preview_bounds_letterbox_wide_and_tall_canvases(self):
-        self.assertEqual(ServeScanApp._preview_bounds(1280, 720), (0.0, 0.0, 1280.0, 720.0))
-        left, top, width, height = ServeScanApp._preview_bounds(1000, 1000)
-        self.assertEqual((left, width), (0.0, 1000.0))
-        self.assertAlmostEqual(top, 218.75)
-        self.assertAlmostEqual(height, 562.5)
-
-    def test_marker_text(self):
-        instance = bare_app()
-        instance.marker_position = None
-        self.assertEqual(instance._marker_text(), "Click preview")
-        instance.marker_position = (12, 34)
-        self.assertEqual(instance._marker_text(), "x: 12  y: 34")
-
     def test_capture_pause_and_resume_state_machine(self):
-        camera = Mock()
+        recorder = Mock()
         now = [10.0]
         controller = CaptureController(
-            camera,
+            recorder,
             ErrorHandler(),
-            app_module.Path("captures"),
+            Path("captures"),
             clock=lambda: now[0],
         )
-        controller.toggle(frame_available=True)
-        self.assertEqual(controller.state, controller.RECORDING)
-        camera.start_recording.assert_called_once()
+        frame = object()
+        controller.toggle(current_frame=frame)
+        self.assertIs(controller.state, CaptureState.RECORDING)
+        recorder.start.assert_called_once_with(Path("captures"), frame)
 
         now[0] = 13.5
-        controller.toggle(frame_available=True)
-        self.assertEqual(controller.state, controller.PAUSED)
+        controller.toggle(current_frame=frame)
+        self.assertIs(controller.state, CaptureState.PAUSED)
         self.assertEqual(controller.recorded_seconds, 3.5)
-        camera.set_recording.assert_called_with(False)
+        recorder.set_recording.assert_called_with(False)
 
         now[0] = 20.0
-        controller.toggle(frame_available=True)
-        self.assertEqual(controller.state, controller.RECORDING)
-        camera.set_recording.assert_called_with(True)
+        controller.toggle(current_frame=frame)
+        self.assertIs(controller.state, CaptureState.RECORDING)
+        recorder.set_recording.assert_called_with(True)
 
     def test_recording_error_is_handled_without_state_change(self):
         reporter = Mock()
-        camera = Mock()
-        camera.start_recording.side_effect = RecordingError("cannot write")
+        recorder = Mock()
+        recorder.start.side_effect = RecordingError("cannot write")
         controller = CaptureController(
-            camera, ErrorHandler(reporter), app_module.Path("captures")
+            recorder, ErrorHandler(reporter), Path("captures")
         )
 
-        controller.toggle(frame_available=True)
+        controller.toggle(current_frame=object())
 
-        self.assertEqual(controller.state, controller.READY)
+        self.assertIs(controller.state, CaptureState.READY)
         reporter.assert_called_once_with("Recording error", "cannot write")
 
     def test_waits_for_frame_before_recording(self):
@@ -84,7 +73,7 @@ class AppLogicTests(unittest.TestCase):
         instance.last_rgb_frame = None
         instance.capture_control.toggle.return_value = "Waiting for a camera frame..."
         instance.toggle_capture()
-        instance.capture_control.toggle.assert_called_once_with(frame_available=False)
+        instance.capture_control.toggle.assert_called_once_with(current_frame=None)
         instance.ui.set_detail.assert_called_with("Waiting for a camera frame...")
 
     def test_upload_mode_does_not_allow_camera_capture(self):
@@ -94,7 +83,7 @@ class AppLogicTests(unittest.TestCase):
         instance.toggle_capture()
 
         instance.capture_control.toggle.assert_not_called()
-        self.assertEqual(instance.capture_control.state, instance.READY)
+        self.assertIs(instance.capture_control.state, CaptureState.READY)
 
     def test_upload_video_opens_picker_and_remembers_selection(self):
         instance = bare_app()
@@ -107,10 +96,10 @@ class AppLogicTests(unittest.TestCase):
             root, default_size=(1280, 720), default_fps=30,
             render_frame=Mock(), set_detail=Mock(), is_upload_mode=lambda: True,
         )
-        controller.selected_path = app_module.Path("existing.mp4")
+        controller.selected_path = Path("existing.mp4")
         with patch.object(video_upload_module.filedialog, "askopenfilename", return_value=""):
             controller.choose_video()
-        self.assertEqual(controller.selected_path, app_module.Path("existing.mp4"))
+        self.assertEqual(controller.selected_path, Path("existing.mp4"))
 
     def test_uploaded_frame_replaces_camera_preview(self):
         root = Mock()
@@ -141,14 +130,14 @@ class AppLogicTests(unittest.TestCase):
         controller = CaptureController(
             Mock(),
             ErrorHandler(),
-            app_module.Path("captures"),
+            Path("captures"),
             clock=lambda: 12.5,
         )
-        controller.state = controller.RECORDING
+        controller.state = CaptureState.RECORDING
         controller.recorded_seconds = 4.0
         controller.segment_started = 10.0
         self.assertEqual(controller.elapsed(), 6.5)
-        controller.state = controller.PAUSED
+        controller.state = CaptureState.PAUSED
         self.assertEqual(controller.elapsed(), 4.0)
 
     def test_tk_callback_exception_uses_central_handler(self):
@@ -164,24 +153,26 @@ class AppLogicTests(unittest.TestCase):
         )
 
     def test_stop_capture_finalizes_and_resets(self):
-        instance = bare_app(ServeScanApp.RECORDING)
+        instance = bare_app(CaptureState.RECORDING)
         instance.capture_control.stop.return_value = None
         instance.stop_capture()
         instance.capture_control.stop.assert_called_once_with()
         instance.ui.set_elapsed.assert_called_with(0)
 
     def test_stop_capture_reports_detection_fallback(self):
-        instance = bare_app(ServeScanApp.RECORDING)
-        instance.capture_control.stop.return_value = app_module.Path(
+        instance = bare_app(CaptureState.RECORDING)
+        instance.capture_control.stop.return_value = Path(
             "captures/test.mp4"
         )
-        instance.camera.detection_error = "model failed"
+        instance.frame_processor.detection_error = "model failed"
 
         instance.stop_capture()
 
-        message = instance.ui.set_detail.call_args.args[0]
-        self.assertIn("Saved line + 0.50× speed", message)
-        self.assertIn("detection unavailable", message)
+        instance.ui.show_saved_capture.assert_called_once()
+        self.assertEqual(
+            instance.ui.show_saved_capture.call_args.kwargs["detection_error"],
+            "model failed",
+        )
 
 
 class TouchButtonLogicTests(unittest.TestCase):
@@ -239,17 +230,17 @@ class EntryPointTests(unittest.TestCase):
     def test_main_success_and_failure_exit_codes(self):
         fake_app = Mock()
         error_log = Mock()
-        with patch.object(servescan, "get_error_log", return_value=error_log), patch.object(
-            servescan, "ServeScanApp", return_value=fake_app
+        with patch.object(main, "get_error_log", return_value=error_log), patch.object(
+            main, "ServeScanApp", return_value=fake_app
         ):
-            self.assertEqual(servescan.main(), 0)
+            self.assertEqual(main.main(), 0)
             fake_app.mainloop.assert_called_once_with()
             error_log.install_global_hooks.assert_called_once_with()
 
-        with patch.object(servescan, "get_error_log", return_value=error_log), patch.object(
-            servescan, "ServeScanApp", side_effect=RuntimeError("boom")
+        with patch.object(main, "get_error_log", return_value=error_log), patch.object(
+            main, "ServeScanApp", side_effect=RuntimeError("boom")
         ), patch("sys.stderr"):
-            self.assertEqual(servescan.main(), 1)
+            self.assertEqual(main.main(), 1)
             self.assertTrue(error_log.write.called)
 
 

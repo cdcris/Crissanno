@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tkinter as tk
 from collections.abc import Callable
+from pathlib import Path
 
 try:
     from PIL import Image, ImageTk
@@ -11,8 +12,10 @@ except ImportError:
     Image = None
     ImageTk = None
 
-from color import COLORS, FONT_FAMILY, MONO_FONT_FAMILY, ServeScanTheme
-from touch_button import TouchButton
+from capture.state import CaptureState
+from marker.model import marker_text, preview_bounds
+from ui.theme import COLORS, FONT_FAMILY, MONO_FONT_FAMILY, ServeScanTheme
+from ui.touch_button import TouchButton
 
 
 class ServeScanUI:
@@ -39,7 +42,7 @@ class ServeScanUI:
         self.marker_position = marker_position
         self.preview_photo = None
         self.rgb_frame = None
-        self.capture_state = "ready"
+        self.capture_state = CaptureState.READY
         self.feature_mode = "capture"
         self.media_size = camera_size
         self.media_fps = camera_fps
@@ -177,25 +180,13 @@ class ServeScanUI:
 
     @staticmethod
     def marker_text(marker_position: tuple[int, int] | None) -> str:
-        if marker_position is None:
-            return "Click preview"
-        x, y = marker_position
-        return f"x: {x}  y: {y}"
+        return marker_text(marker_position)
 
     @staticmethod
     def preview_bounds(
         width: int, height: int, camera_size: tuple[int, int]
     ) -> tuple[float, float, float, float]:
-        camera_width, camera_height = camera_size
-        scale = min(width / camera_width, height / camera_height)
-        image_width = camera_width * scale
-        image_height = camera_height * scale
-        return (
-            (width - image_width) / 2,
-            (height - image_height) / 2,
-            image_width,
-            image_height,
-        )
+        return preview_bounds(width, height, camera_size)
 
     def set_detail(self, text: str) -> None:
         self.detail_label.configure(text=text)
@@ -216,6 +207,25 @@ class ServeScanUI:
         if self.feature_mode == "capture":
             self.set_detail("Camera unavailable")
         self.capture_button.set_enabled(False)
+
+    def show_saved_capture(
+        self,
+        path: Path,
+        *,
+        speed: float,
+        detection_error: str,
+        project_dir: Path,
+    ) -> None:
+        """Show a friendly summary after a recording is finalized."""
+        try:
+            shown = path.relative_to(project_dir)
+        except ValueError:
+            shown = path
+        if detection_error:
+            detail = f"Saved line + {speed:.2f}× speed; detection unavailable • {shown}"
+        else:
+            detail = f"Saved line + {speed:.2f}× + detection • {shown}"
+        self.set_detail(detail)
 
     def toggle_feature_mode(self) -> None:
         """Switch between the separate capture and upload controls."""
@@ -241,8 +251,8 @@ class ServeScanUI:
             self.set_detail("Ready for camera capture")
         self.on_mode_changed(self.feature_mode)
 
-    def sync_capture_state(self, state: str) -> None:
-        if state == "ready":
+    def sync_capture_state(self, state: CaptureState) -> None:
+        if state is CaptureState.READY:
             self.header_status.configure(
                 text="  READY  ", bg=COLORS["surface_soft"], fg=COLORS["text_muted"]
             )
@@ -252,7 +262,7 @@ class ServeScanUI:
             self.stop_button.set_enabled(False)
             self.upload_button.set_enabled(True)
             self.mode_button.set_enabled(True)
-        elif state == "recording":
+        elif state is CaptureState.RECORDING:
             self.header_status.configure(text="  ● RECORDING  ", bg=COLORS["danger"], fg=COLORS["white"])
             self.capture_button.configure_content(
                 "Pause", "pause", COLORS["warning"], COLORS["warning_hover"]
@@ -274,7 +284,7 @@ class ServeScanUI:
     def render_preview(
         self,
         rgb_frame,
-        state: str,
+        state: CaptureState,
         media_size: tuple[int, int] | None = None,
         media_fps: int | float | None = None,
     ) -> None:
@@ -326,11 +336,12 @@ class ServeScanUI:
                 fill=COLORS["white"], font=(MONO_FONT_FAMILY, 9, "bold"),
             )
 
-        if self.capture_state in ("recording", "paused"):
-            badge_color = COLORS["danger"] if self.capture_state == "recording" else COLORS["warning"]
-            badge_text = "●  REC" if self.capture_state == "recording" else "Ⅱ  PAUSED"
+        if self.capture_state in (CaptureState.RECORDING, CaptureState.PAUSED):
+            is_recording = self.capture_state is CaptureState.RECORDING
+            badge_color = COLORS["danger"] if is_recording else COLORS["warning"]
+            badge_text = "●  REC" if is_recording else "Ⅱ  PAUSED"
             canvas.create_rectangle(
-                18, 18, 111 if self.capture_state == "recording" else 130, 50,
+                18, 18, 111 if is_recording else 130, 50,
                 fill=COLORS["preview_overlay"], outline="",
             )
             canvas.create_text(

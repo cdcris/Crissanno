@@ -5,17 +5,18 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from errors import MarkerStorageError
+from marker.model import FrameSize, MarkerPosition
+from shared.errors import MarkerStorageError
 
 
 class MarkerStore:
     """Load and save a marker while keeping file handling outside the UI."""
 
-    def __init__(self, path: Path, frame_size: tuple[int, int]) -> None:
+    def __init__(self, path: Path, frame_size: FrameSize) -> None:
         self.path = path
         self.frame_size = frame_size
 
-    def load(self) -> tuple[int, int] | None:
+    def load(self) -> MarkerPosition | None:
         """Return a valid saved position, or ``None`` for absent/invalid data."""
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
@@ -30,7 +31,7 @@ class MarkerStore:
         width, height = self.frame_size
         return (x, y) if 0 <= x < width and 0 <= y < height else None
 
-    def save(self, position: tuple[int, int]) -> None:
+    def save(self, position: MarkerPosition) -> None:
         """Persist *position*, raising a domain error if writing fails."""
         x, y = position
         try:

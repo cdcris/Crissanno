@@ -6,10 +6,11 @@ from types import SimpleNamespace
 import threading
 from unittest.mock import Mock, patch
 
-from camera_source import CameraSource
-from error_log import ErrorLog
-from errors import ErrorHandler, MarkerStorageError, RecordingError
-from marker_store import MarkerStore
+from capture.camera import CameraSource
+from marker.model import canvas_to_camera, marker_text, preview_bounds
+from marker.store import MarkerStore
+from shared.error_log import ErrorLog
+from shared.errors import ErrorHandler, MarkerStorageError, RecordingError
 
 
 class ErrorHandlerTests(unittest.TestCase):
@@ -136,6 +137,31 @@ class MarkerStoreTests(unittest.TestCase):
         self.path.write_text.side_effect = OSError("full")
         with self.assertRaisesRegex(MarkerStorageError, "Could not save"):
             self.store.save((1, 2))
+
+
+class MarkerModelTests(unittest.TestCase):
+    def test_marker_text(self):
+        self.assertEqual(marker_text(None), "Click preview")
+        self.assertEqual(marker_text((12, 34)), "x: 12  y: 34")
+
+    def test_preview_bounds_letterbox_wide_and_tall_canvases(self):
+        self.assertEqual(
+            preview_bounds(1280, 720, (1280, 720)),
+            (0.0, 0.0, 1280.0, 720.0),
+        )
+        left, top, width, height = preview_bounds(1000, 1000, (1280, 720))
+        self.assertEqual((left, width), (0.0, 1000.0))
+        self.assertAlmostEqual(top, 218.75)
+        self.assertAlmostEqual(height, 562.5)
+
+    def test_canvas_click_converts_to_camera_coordinates(self):
+        self.assertEqual(
+            canvas_to_camera(500, 500, (1000, 1000), (1280, 720), (1280, 720)),
+            (640, 360),
+        )
+        self.assertIsNone(
+            canvas_to_camera(500, 100, (1000, 1000), (1280, 720), (1280, 720))
+        )
 
 
 if __name__ == "__main__":

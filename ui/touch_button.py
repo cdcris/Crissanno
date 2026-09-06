@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Callable, Optional
 import tkinter as tk
 
-from color import COLORS, FONT_FAMILY
+from ui.theme import COLORS, FONT_FAMILY
 
 
 class TouchButton(tk.Canvas):

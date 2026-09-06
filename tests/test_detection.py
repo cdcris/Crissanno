@@ -2,8 +2,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import detect
-from detect import ObjectDetector
+import detection.detector as detector_module
+from detection.detector import ObjectDetector
 
 
 class ObjectDetectorTests(unittest.TestCase):
@@ -14,7 +14,7 @@ class ObjectDetectorTests(unittest.TestCase):
         model.predict.return_value = [result]
         detector = ObjectDetector(Path("model"), confidence=0.4)
 
-        with patch.object(detect, "load_model", return_value=model) as load:
+        with patch.object(detector_module, "load_model", return_value=model) as load:
             self.assertEqual(detector.annotate("frame-1"), "annotated")
             self.assertEqual(detector.annotate("frame-2"), "annotated")
 

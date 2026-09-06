@@ -3,8 +3,8 @@
 import sys
 
 from app import ServeScanApp
-from error_log import get_error_log
-from errors import ErrorHandler
+from shared.error_log import get_error_log
+from shared.errors import ErrorHandler
 
 
 def main() -> int:

@@ -3,17 +3,31 @@
 from __future__ import annotations
 
 import sys
+from abc import ABC, abstractmethod
 
 try:
     import cv2
 except ImportError:
     cv2 = None
 
-from camera_source import CameraSource
-from errors import CameraOpenError, CameraReadError
+from shared.errors import CameraOpenError, CameraReadError
 
 
 CAMERA_INDEX = 0
+
+
+class CameraSource(ABC):
+    """Small interface implemented by camera hardware adapters."""
+
+    name = "Camera"
+
+    @abstractmethod
+    def read_rgb(self):
+        """Return the next RGB frame, or ``None`` when none is ready."""
+
+    @abstractmethod
+    def close(self) -> None:
+        """Release resources owned by the camera."""
 
 
 class USBCameraSource(CameraSource):

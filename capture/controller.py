@@ -1,75 +1,73 @@
-"""Control capture start, pause, resume, and stop state for ServeScan."""
+"""Capture workflow: start, pause, resume, and stop."""
 
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
-from camera_worker import CameraWorker
-from errors import ErrorHandler
+from capture.recorder import VideoRecorder
+from capture.state import CaptureState
+from shared.errors import ErrorHandler
 
 
 class CaptureController:
-    """Own the recording state machine independently of the app shell."""
-
-    READY = "ready"
-    RECORDING = "recording"
-    PAUSED = "paused"
+    """Own recording decisions while leaving file writing to ``VideoRecorder``."""
 
     def __init__(
         self,
-        camera: CameraWorker,
+        recorder: VideoRecorder,
         errors: ErrorHandler,
         capture_dir: Path,
         *,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        self.camera = camera
+        self.recorder = recorder
         self.errors = errors
         self.capture_dir = capture_dir
         self.clock = clock
-        self.state = self.READY
+        self.state = CaptureState.READY
         self.recorded_seconds = 0.0
         self.segment_started = 0.0
 
-    def toggle(self, *, frame_available: bool) -> bool | str:
+    def toggle(self, *, current_frame) -> bool | str:
         """Start, pause, or resume capture."""
-        if not frame_available:
+        if current_frame is None:
             return "Waiting for a camera frame..."
 
-        if self.state == self.READY:
+        if self.state is CaptureState.READY:
             try:
-                self.camera.start_recording(self.capture_dir)
+                self.recorder.start(self.capture_dir, current_frame)
             except Exception as error:
                 self.errors.handle(error, "Recording error")
                 return False
             self.recorded_seconds = 0.0
             self.segment_started = self.clock()
-            self.state = self.RECORDING
-        elif self.state == self.RECORDING:
+            self.state = CaptureState.RECORDING
+        elif self.state is CaptureState.RECORDING:
             self.recorded_seconds += self.clock() - self.segment_started
-            self.camera.set_recording(False)
-            self.state = self.PAUSED
+            self.recorder.set_recording(False)
+            self.state = CaptureState.PAUSED
         else:
             self.segment_started = self.clock()
-            self.camera.set_recording(True)
-            self.state = self.RECORDING
+            self.recorder.set_recording(True)
+            self.state = CaptureState.RECORDING
         return True
 
     def elapsed(self) -> float:
-        if self.state == self.RECORDING:
+        """Return seconds captured, excluding time spent paused."""
+        if self.state is CaptureState.RECORDING:
             return self.recorded_seconds + self.clock() - self.segment_started
         return self.recorded_seconds
 
     def stop(self) -> Path | None:
-        """Finalize the current recording and reset capture state."""
-        if self.state == self.READY:
+        """Finalize the recording and return to the ready state."""
+        if self.state is CaptureState.READY:
             return None
-        if self.state == self.RECORDING:
+        if self.state is CaptureState.RECORDING:
             self.recorded_seconds += self.clock() - self.segment_started
-        saved_path = self.camera.stop_recording()
-        self.state = self.READY
+        saved_path = self.recorder.stop()
+        self.state = CaptureState.READY
         self.recorded_seconds = 0.0
         self.segment_started = 0.0
         return saved_path

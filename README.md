@@ -11,7 +11,7 @@ the USB camera, video encoding, and capture while Pillow renders the preview.
 ```bash
 sudo apt update
 sudo apt install -y python3-opencv python3-pil.imagetk
-python3 servescan.py
+python3 main.py
 ```
 
 For a USB camera or desktop development, install the Python dependencies in a
@@ -19,7 +19,7 @@ virtual environment:
 
 ```bash
 python -m pip install -r requirements.txt
-python servescan.py
+python main.py
 ```
 
 Press **Capture** to begin, use the same button to pause/resume, and press
@@ -61,13 +61,46 @@ python -m unittest discover -s tests -v
 To run one test file or one individual test:
 
 ```bash
-python -m unittest -v tests.test_camera
-python -m unittest -v tests.test_camera.CameraWorkerTests.test_start_pause_resume_and_stop_recording
+python -m unittest -v tests.test_capture
+python -m unittest -v tests.test_capture.VideoRecorderTests.test_start_pause_write_resume_and_stop
 ```
 
 On a Raspberry Pi where Python is exposed as `python3`, replace `python` with
 `python3`. A successful run ends with `OK`; failures include the test name and
-traceback. The GUI can also be smoke-tested manually with `python servescan.py`.
+traceback. The GUI can also be smoke-tested manually with `python main.py`.
+
+## Code structure
+
+ServeScan uses a small feature-first architecture. Start reading at `main.py`,
+then `app.py`. The application shell connects the features but leaves their
+implementation to focused classes:
+
+```text
+main.py                  Start the process and catch fatal errors
+app.py                   Connect UI events to feature controllers
+config.py                Application settings and project paths
+
+capture/controller.py    Decide when capture starts, pauses, and stops
+capture/worker.py        Read camera frames on a background thread
+capture/recorder.py      Write processed frames to a video file
+capture/frame_processor.py
+                         Draw the marker and run object detection
+capture/camera.py        Access the USB camera
+
+upload/controller.py     Select and preview uploaded videos
+detection/detector.py    Load YOLO and annotate frames
+marker/model.py          Convert and format marker coordinates
+marker/store.py          Save marker coordinates as JSON
+ui/window.py             Build and update the main window
+ui/touch_button.py       Draw the custom touch button
+ui/theme.py              Colors and fonts
+shared/errors.py         Application-specific errors
+shared/error_log.py      Rotating exception log
+```
+
+The dependency rule is `UI -> controller -> hardware/storage`. Hardware and
+storage modules never update Tkinter widgets. Each class should have one simple
+answer to “What is this responsible for?”
 
 ## Error log
 

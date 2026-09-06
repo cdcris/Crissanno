@@ -1,8 +1,7 @@
-"""Application logic and camera workflow for ServeScan."""
+"""Application shell that connects ServeScan's independent features."""
 
 from __future__ import annotations
 
-from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox
 
@@ -11,37 +10,41 @@ try:
 except ImportError:
     cv2 = None
 
-from app_ui import ServeScanUI
-from control_capture import CaptureController
-from camera_worker import CameraWorker
-from error_log import get_error_log
-from errors import ErrorHandler
-from marker_store import MarkerStore
-from control_video_upload import VideoUploadController
-from detect import ObjectDetector
-
-
-APP_TITLE = "ServeScan"
-WINDOW_SIZE = "1024x600"
-CAMERA_SIZE = (1280, 720)
-CAMERA_FPS = 30
-SLOW_MOTION_SPEED = 0.5
-MARKER_PATH = Path(__file__).with_name("marker_position.json")
+from capture.controller import CaptureController
+from capture.frame_processor import FrameProcessor
+from capture.recorder import VideoRecorder
+from capture.state import CaptureState
+from capture.worker import CameraWorker
+from config import (
+    APP_TITLE,
+    CAMERA_FPS,
+    CAMERA_SIZE,
+    CAPTURE_DIR,
+    MARKER_PATH,
+    PROJECT_DIR,
+    SLOW_MOTION_SPEED,
+    WINDOW_SIZE,
+)
+from detection.detector import ObjectDetector
+from marker.model import canvas_to_camera
+from marker.store import MarkerStore
+from shared.error_log import get_error_log
+from shared.errors import ErrorHandler
+from ui.window import ServeScanUI
+from upload.controller import VideoUploadController
 
 
 class ServeScanApp(tk.Tk):
-    READY = "ready"
-    RECORDING = "recording"
-    PAUSED = "paused"
+    """Coordinate UI events without implementing camera or storage details."""
 
     def __init__(self) -> None:
         super().__init__()
         self.error_log = get_error_log()
         self.errors = ErrorHandler(messagebox.showerror, self.error_log)
         self.marker_store = MarkerStore(MARKER_PATH, CAMERA_SIZE)
+        self.marker_position = self.errors.protect(self.marker_store.load)
         self.last_frame_number = -1
         self.last_rgb_frame = None
-        self.marker_position = self.errors.protect(self.marker_store.load)
         self.camera_reported = False
         self.closing = False
 
@@ -58,20 +61,28 @@ class ServeScanApp(tk.Tk):
             on_stop_capture=self.stop_capture,
             on_marker_click=self._set_marker_position,
         )
-        self.protocol("WM_DELETE_WINDOW", self.close)
-        self.bind("<space>", lambda _event: self.toggle_capture())
-        self.bind("<Escape>", lambda _event: self.stop_capture())
-        self.bind("<F11>", self._toggle_fullscreen)
 
+        self.frame_processor = FrameProcessor(
+            CAMERA_SIZE,
+            detector=ObjectDetector(),
+            error_log=self.error_log,
+        )
+        self.frame_processor.set_marker(self.marker_position)
+        self.recorder = VideoRecorder(
+            CAMERA_FPS,
+            SLOW_MOTION_SPEED,
+            self.frame_processor,
+        )
         self.camera = CameraWorker(
             CAMERA_SIZE,
             CAMERA_FPS,
             self.error_log,
-            playback_speed=SLOW_MOTION_SPEED,
-            detector=ObjectDetector(),
+            on_frame=self.recorder.write,
         )
         self.capture_control = CaptureController(
-            self.camera, self.errors, Path.cwd() / "captures"
+            self.recorder,
+            self.errors,
+            CAPTURE_DIR,
         )
         self.video_upload = VideoUploadController(
             self,
@@ -81,13 +92,17 @@ class ServeScanApp(tk.Tk):
             set_detail=self.ui.set_detail,
             is_upload_mode=lambda: self.ui.feature_mode == "upload",
         )
-        self.camera.set_marker_position(self.marker_position)
+
+        self.protocol("WM_DELETE_WINDOW", self.close)
+        self.bind("<space>", lambda _event: self.toggle_capture())
+        self.bind("<Escape>", lambda _event: self.stop_capture())
+        self.bind("<F11>", self._toggle_fullscreen)
         self.camera.start()
         self.after(40, self._update_preview)
         self.after(200, self._update_elapsed)
 
     def upload_video(self) -> None:
-        """Let the user choose an existing video for the next processing step."""
+        """Open the upload picker and report failures at the UI boundary."""
         try:
             self.video_upload.choose_video()
         except Exception as error:
@@ -104,20 +119,11 @@ class ServeScanApp(tk.Tk):
             self._render_preview()
 
     def _render_uploaded_frame(self, frame, size: tuple[int, int], fps: float) -> None:
-        self.ui.render_preview(frame, self.READY, size, fps)
+        self.ui.render_preview(frame, CaptureState.READY, size, fps)
 
     def report_callback_exception(self, exc_type, exc_value, exc_traceback) -> None:
         """Log exceptions raised by Tk event and timer callbacks."""
         self.errors.handle(exc_value, "Application callback error", exc_traceback)
-
-    @staticmethod
-    def _preview_bounds(width: int, height: int) -> tuple[float, float, float, float]:
-        """Return the displayed camera bounds within a potentially letterboxed preview."""
-        return ServeScanUI.preview_bounds(width, height, CAMERA_SIZE)
-
-    def _marker_text(self) -> str:
-        """Format the current marker for logs or non-UI callers."""
-        return ServeScanUI.marker_text(self.marker_position)
 
     def _set_marker_position(
         self, canvas_x: int, canvas_y: int, width: int, height: int
@@ -125,31 +131,23 @@ class ServeScanApp(tk.Tk):
         media_size = (
             self.video_upload.size if self.ui.feature_mode == "upload" else CAMERA_SIZE
         )
-        left, top, image_width, image_height = ServeScanUI.preview_bounds(
-            width, height, media_size
+        position = canvas_to_camera(
+            canvas_x,
+            canvas_y,
+            (width, height),
+            media_size,
+            CAMERA_SIZE,
         )
-        if not (
-            left <= canvas_x <= left + image_width
-            and top <= canvas_y <= top + image_height
-        ):
+        if position is None:
             return
 
-        x = min(
-            CAMERA_SIZE[0] - 1,
-            max(0, round((canvas_x - left) * CAMERA_SIZE[0] / image_width)),
-        )
-        y = min(
-            CAMERA_SIZE[1] - 1,
-            max(0, round((canvas_y - top) * CAMERA_SIZE[1] / image_height)),
-        )
-        self.marker_position = (x, y)
-        self.camera.set_marker_position(self.marker_position)
-        self.ui.set_marker(self.marker_position)
+        self.marker_position = position
+        self.frame_processor.set_marker(position)
+        self.ui.set_marker(position)
         try:
-            self.marker_store.save(self.marker_position)
+            self.marker_store.save(position)
         except Exception as error:
-            message = self.errors.handle(error, "Line position error")
-            self.ui.set_detail(message)
+            self.ui.set_detail(self.errors.handle(error, "Line position error"))
         self._render_preview()
 
     def _toggle_fullscreen(self, _event=None) -> None:
@@ -184,56 +182,45 @@ class ServeScanApp(tk.Tk):
         self.after(33, self._update_preview)
 
     def toggle_capture(self) -> None:
+        """Pass the latest frame to the capture workflow and refresh the UI."""
         if self.ui.feature_mode != "capture":
             return
-        result = self.capture_control.toggle(
-            frame_available=self.last_rgb_frame is not None
-        )
+        result = self.capture_control.toggle(current_frame=self.last_rgb_frame)
         if isinstance(result, str):
             self.ui.set_detail(result)
-            return
-        if not result:
-            return
-        self._sync_state_ui()
+        elif result:
+            self._sync_state_ui()
 
     def _sync_state_ui(self) -> None:
         self.ui.sync_capture_state(self.capture_control.state)
         self._render_preview()
 
-    def _elapsed(self) -> float:
-        return self.capture_control.elapsed()
-
     def _update_elapsed(self) -> None:
         if self.closing:
             return
-        self.ui.set_elapsed(max(0, int(self._elapsed())))
+        self.ui.set_elapsed(max(0, int(self.capture_control.elapsed())))
         self.after(200, self._update_elapsed)
 
     def stop_capture(self) -> None:
-        if self.capture_control.state == self.READY:
+        """Finalize an active capture and tell the UI what was saved."""
+        if self.capture_control.state is CaptureState.READY:
             return
         saved_path = self.capture_control.stop()
         self._sync_state_ui()
         self.ui.set_elapsed(0)
         if saved_path:
-            try:
-                shown = saved_path.relative_to(Path.cwd())
-            except ValueError:
-                shown = saved_path
-            if self.camera.detection_error:
-                self.ui.set_detail(
-                    f"Saved line + {SLOW_MOTION_SPEED:.2f}× speed; "
-                    f"detection unavailable • {shown}"
-                )
-            else:
-                self.ui.set_detail(
-                    f"Saved line + {SLOW_MOTION_SPEED:.2f}× + detection • {shown}"
-                )
+            self.ui.show_saved_capture(
+                saved_path,
+                speed=SLOW_MOTION_SPEED,
+                detection_error=self.frame_processor.detection_error,
+                project_dir=PROJECT_DIR,
+            )
 
     def close(self) -> None:
+        """Release playback, recording, and camera resources before exit."""
         self.closing = True
         self.video_upload.close()
-        if self.capture_control.state != self.READY:
+        if self.capture_control.state is not CaptureState.READY:
             self.stop_capture()
         self.camera.stop()
         self.destroy()

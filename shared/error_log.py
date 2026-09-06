@@ -10,8 +10,10 @@ import threading
 import traceback
 from types import TracebackType
 
+from config import PROJECT_DIR
 
-ERROR_LOG_PATH = Path(__file__).with_name("logs") / "servescan-error.log"
+
+ERROR_LOG_PATH = PROJECT_DIR / "logs" / "servescan-error.log"
 
 
 class ErrorLog:

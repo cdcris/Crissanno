@@ -6,7 +6,7 @@ from collections.abc import Callable
 from types import TracebackType
 from typing import TypeVar
 
-from error_log import ErrorLog
+from shared.error_log import ErrorLog
 
 
 class ServeScanError(Exception):
