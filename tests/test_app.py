@@ -18,7 +18,7 @@ def bare_app(state=ServeScanApp.READY):
     instance.camera = Mock()
     instance.errors = ErrorHandler()
     instance._sync_state_ui = Mock()
-    instance.detail_label = Mock()
+    instance.ui = Mock()
     return instance
 
 
@@ -72,7 +72,7 @@ class AppLogicTests(unittest.TestCase):
         instance.last_rgb_frame = None
         instance.toggle_capture()
         instance.camera.start_recording.assert_not_called()
-        instance.detail_label.configure.assert_called_with(text="Waiting for a camera frame...")
+        instance.ui.set_detail.assert_called_with("Waiting for a camera frame...")
 
     def test_elapsed_counts_only_active_segments(self):
         instance = bare_app(ServeScanApp.RECORDING)
@@ -99,13 +99,12 @@ class AppLogicTests(unittest.TestCase):
         instance = bare_app(ServeScanApp.RECORDING)
         instance.segment_started = 10.0
         instance.camera.stop_recording.return_value = None
-        instance.elapsed_label = Mock()
         with patch.object(app_module.time, "monotonic", return_value=12.0):
             instance.stop_capture()
         self.assertEqual(instance.state_name, instance.READY)
         self.assertEqual(instance.recorded_seconds, 0.0)
         instance.camera.stop_recording.assert_called_once_with()
-        instance.elapsed_label.configure.assert_called_with(text="00:00")
+        instance.ui.set_elapsed.assert_called_with(0)
 
 
 class TouchButtonLogicTests(unittest.TestCase):
