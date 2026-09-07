@@ -73,6 +73,11 @@ class ServeScanApp(tk.Tk):
             SLOW_MOTION_SPEED,
             self.frame_processor,
         )
+        self.upload_recorder = VideoRecorder(
+            CAMERA_FPS,
+            SLOW_MOTION_SPEED,
+            self.frame_processor,
+        )
         self.camera = CameraWorker(
             CAMERA_SIZE,
             CAMERA_FPS,
@@ -91,6 +96,10 @@ class ServeScanApp(tk.Tk):
             render_frame=self._render_uploaded_frame,
             set_detail=self.ui.set_detail,
             is_upload_mode=lambda: self.ui.feature_mode == "upload",
+            process_frame=self.frame_processor.process_bgr,
+            recorder=self.upload_recorder,
+            capture_dir=CAPTURE_DIR,
+            on_saved=self._show_saved_uploaded_video,
         )
 
         self.protocol("WM_DELETE_WINDOW", self.close)
@@ -120,6 +129,15 @@ class ServeScanApp(tk.Tk):
 
     def _render_uploaded_frame(self, frame, size: tuple[int, int], fps: float) -> None:
         self.ui.render_preview(frame, CaptureState.READY, size, fps)
+
+    def _show_saved_uploaded_video(self, saved_path) -> None:
+        """Report the annotated slow-motion copy created from an upload."""
+        self.ui.show_saved_capture(
+            saved_path,
+            speed=SLOW_MOTION_SPEED,
+            detection_error=self.frame_processor.detection_error,
+            project_dir=PROJECT_DIR,
+        )
 
     def report_callback_exception(self, exc_type, exc_value, exc_traceback) -> None:
         """Log exceptions raised by Tk event and timer callbacks."""

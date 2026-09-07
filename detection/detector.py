@@ -37,7 +37,7 @@ def load_model(model_dir: Path) -> Any:
 
 
 class ObjectDetector:
-    """Lazily load YOLO and annotate BGR frames for saved captures."""
+    """Lazily load YOLO and annotate BGR video frames."""
 
     def __init__(
         self,

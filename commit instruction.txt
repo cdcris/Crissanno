@@ -1,0 +1,16 @@
+Follow these template:
+  feat        new feature                    ? minor bump
+  fix         bug fix                         ? patch bump
+  docs        documentation only
+  style       formatting/linting, no logic change
+  refactor    code change, no behavior change
+  perf        performance improvement
+  test        add/update tests
+  build       build system, deps, compiled artifacts
+  ci          CI/CD config
+  chore       everything else non-code (tooling, misc maintenance)
+  revert      revert a previous commit
+
+ 
+example:
+git commit -m "feat(auth): add password reset"

@@ -136,6 +136,20 @@ class FrameProcessorTests(unittest.TestCase):
         detector.annotate.assert_called_once_with(frame)
         self.assertEqual(result, "detected-frame")
 
+    def test_bgr_frame_can_be_processed_without_color_conversion(self):
+        frame = np.zeros((360, 640, 3), dtype=np.uint8)
+        detector = Mock()
+        detector.annotate.return_value = "detected-frame"
+        processor = FrameProcessor((1280, 720), detector=detector)
+        cv = fake_cv2()
+
+        with patch.object(processor_module, "cv2", cv):
+            result = processor.process_bgr(frame)
+
+        cv.cvtColor.assert_not_called()
+        detector.annotate.assert_called_once_with(frame)
+        self.assertEqual(result, "detected-frame")
+
     def test_detection_failure_keeps_frame_and_disables_detector(self):
         frame = np.zeros((10, 20, 3), dtype=np.uint8)
         detector = Mock()
@@ -178,6 +192,20 @@ class VideoRecorderTests(unittest.TestCase):
         self.assertEqual(writer.frames, ["processed:frame-1", "processed:frame-2"])
         self.assertTrue(writer.released)
         cv.VideoWriter.assert_called_once_with(str(path), 1234, 15.0, (640, 480))
+
+    def test_uploaded_source_fps_controls_slow_motion_output(self):
+        writer = FakeWriter(True)
+        cv = fake_cv2(writers=[writer])
+        with patch.object(recorder_module, "cv2", cv), patch.object(Path, "mkdir"):
+            path = self.recorder.start(
+                Path("captures"), self.frame, source_fps=24.0
+            )
+            self.recorder.write_processed("annotated-frame")
+            self.recorder.stop()
+
+        cv.VideoWriter.assert_called_once_with(str(path), 1234, 12.0, (640, 480))
+        self.assertEqual(writer.frames, ["annotated-frame"])
+        self.processor.process.assert_not_called()
 
     def test_requires_opencv_and_a_first_frame(self):
         with patch.object(recorder_module, "cv2", None):

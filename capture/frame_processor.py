@@ -38,6 +38,13 @@ class FrameProcessor:
             return rgb_frame
 
         video_frame = cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2BGR)
+        return self.process_bgr(video_frame)
+
+    def process_bgr(self, video_frame):
+        """Add the marker and detections to an existing BGR frame."""
+        if cv2 is None:
+            return video_frame
+
         if self.marker_position is not None:
             self._draw_marker(video_frame, self.marker_position)
 

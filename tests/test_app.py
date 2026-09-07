@@ -104,27 +104,100 @@ class AppLogicTests(unittest.TestCase):
     def test_uploaded_frame_replaces_camera_preview(self):
         root = Mock()
         render = Mock()
+        process_frame = Mock(return_value="detected-bgr")
+        set_detail = Mock()
         controller = VideoUploadController(
             root, default_size=(1280, 720), default_fps=30,
-            render_frame=render, set_detail=Mock(), is_upload_mode=lambda: True,
+            render_frame=render, set_detail=set_detail,
+            is_upload_mode=lambda: True,
+            process_frame=process_frame,
         )
         controller.fps = 25.0
+        controller.total_frames = 1
+        controller._terminal_delivered = False
         frame = SimpleNamespace(shape=(360, 640, 3))
-        controller.capture = Mock()
-        controller.capture.read.return_value = (True, frame)
-        root.after.return_value = "upload-timer"
+        capture = Mock()
+        capture.read.side_effect = [(True, frame), (False, None)]
         fake_cv = SimpleNamespace(
             COLOR_BGR2RGB=1,
             cvtColor=Mock(return_value="uploaded-rgb"),
         )
 
         with patch.object(video_upload_module, "cv2", fake_cv):
+            controller._process_video(capture, controller._stop_event, False)
             controller._update()
 
+        process_frame.assert_called_once_with(frame)
+        fake_cv.cvtColor.assert_called_once_with(
+            "detected-bgr", fake_cv.COLOR_BGR2RGB
+        )
         self.assertEqual(controller.rgb_frame, "uploaded-rgb")
         self.assertEqual(controller.size, (640, 360))
         render.assert_called_once_with("uploaded-rgb", (640, 360), 25.0)
-        root.after.assert_called_once_with(40, controller._update)
+        set_detail.assert_called_once_with("Uploaded video finished")
+
+    def test_uploaded_frames_are_saved_and_finalized(self):
+        root = Mock()
+        recorder = Mock()
+        recorder.stop.return_value = Path("captures/annotated.mp4")
+        on_saved = Mock()
+        controller = VideoUploadController(
+            root,
+            default_size=(1280, 720),
+            default_fps=30,
+            render_frame=Mock(),
+            set_detail=Mock(),
+            is_upload_mode=lambda: True,
+            process_frame=Mock(return_value="annotated-bgr"),
+            recorder=recorder,
+            capture_dir=Path("captures"),
+            on_saved=on_saved,
+        )
+        controller.fps = 24.0
+        controller.total_frames = 1
+        controller._terminal_delivered = False
+        frame = SimpleNamespace(shape=(360, 640, 3))
+        capture = Mock()
+        capture.read.side_effect = [(True, frame), (False, None)]
+        fake_cv = SimpleNamespace(
+            COLOR_BGR2RGB=1,
+            cvtColor=Mock(return_value="annotated-rgb"),
+        )
+
+        with patch.object(video_upload_module, "cv2", fake_cv):
+            controller._process_video(capture, controller._stop_event, True)
+            controller._update()
+
+        recorder.start.assert_called_once_with(
+            Path("captures"), "annotated-bgr", source_fps=24.0
+        )
+        recorder.write_processed.assert_called_once_with("annotated-bgr")
+        recorder.stop.assert_called_once_with()
+        on_saved.assert_called_once_with(Path("captures/annotated.mp4"))
+
+    def test_upload_progress_reports_percentage_and_frame_count(self):
+        root = Mock()
+        root.after.return_value = "progress-timer"
+        set_detail = Mock()
+        controller = VideoUploadController(
+            root,
+            default_size=(1280, 720),
+            default_fps=30,
+            render_frame=Mock(),
+            set_detail=set_detail,
+            is_upload_mode=lambda: True,
+        )
+        controller._worker_done = False
+        controller.total_frames = 20
+        controller.processed_frames = 7
+        controller._active_name = "serve.mp4"
+
+        controller._update()
+
+        set_detail.assert_called_once_with(
+            "Detecting 35% • frame 7/20 • serve.mp4"
+        )
+        root.after.assert_called_once_with(33, controller._update)
 
     def test_elapsed_counts_only_active_segments(self):
         controller = CaptureController(

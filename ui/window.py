@@ -80,11 +80,11 @@ class ServeScanUI:
         title_box.grid(row=0, column=1, sticky="w")
         tk.Label(
             title_box, text="SERVESCAN", bg=COLORS["surface"], fg=COLORS["text"],
-            font=(FONT_FAMILY, 15, "bold"),
+            font=(FONT_FAMILY, 11, "bold"),
         ).pack(anchor="w")
         self.feature_label = tk.Label(
             title_box, text="CAMERA CAPTURE", bg=COLORS["surface"], fg=COLORS["text_muted"],
-            font=(FONT_FAMILY, 8, "bold"),
+            font=(FONT_FAMILY, 7, "bold"),
         )
         self.feature_label.pack(anchor="w")
 
@@ -130,7 +130,7 @@ class ServeScanUI:
         info.grid(row=0, column=0, sticky="w", padx=(22, 12))
         self.elapsed_label = tk.Label(
             info, text="00:00", bg=COLORS["surface"], fg=COLORS["text"],
-            font=(MONO_FONT_FAMILY, 18, "bold"),
+            font=(MONO_FONT_FAMILY, 14, "bold"),
         )
         self.elapsed_label.pack(anchor="w")
         self.detail_label = tk.Label(
@@ -305,6 +305,12 @@ class ServeScanUI:
             self.preview_photo = ImageTk.PhotoImage(frame)
             canvas.create_image(width / 2, height / 2, image=self.preview_photo)
         else:
+            if ImageTk is None:
+                preview_text = "PREVIEW UNAVAILABLE • INSTALL python3-pil.imagetk"
+            elif self.feature_mode == "upload":
+                preview_text = "WAITING FOR UPLOADED VIDEO"
+            else:
+                preview_text = "WAITING FOR CAMERA"
             canvas.create_oval(
                 width / 2 - 27, height / 2 - 27, width / 2 + 27, height / 2 + 27,
                 outline=COLORS["preview_border"], width=2,
@@ -314,7 +320,7 @@ class ServeScanUI:
                 outline=COLORS["preview_border"], width=2,
             )
             canvas.create_text(
-                width / 2, height / 2 + 50, text="WAITING FOR CAMERA",
+                width / 2, height / 2 + 50, text=preview_text,
                 fill=COLORS["preview_text"], font=(FONT_FAMILY, 9, "bold"),
             )
 

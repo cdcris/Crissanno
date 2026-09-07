@@ -39,9 +39,13 @@ controls are available. Select **Upload Mode** to show the separate Upload
 Video control, which accepts MP4, AVI, MOV, MKV, M4V, or WebM files. Use the
 same mode switch to return to camera capture.
 
-An uploaded video plays directly in the main preview in place of the live
-camera. Camera capture controls are unavailable in Upload Mode, while the
-horizontal reference line remains visible and can still be repositioned.
+An uploaded video plays in the main preview in place of the live camera, with
+the same object-detection boxes, labels, and horizontal reference line applied
+to each frame. The processed video is also saved automatically under
+`captures/` at the configured 0.50× slow-motion speed. Detection runs in the
+background so the preview remains responsive, and the status line reports its
+percentage and frame-count progress. Camera capture controls are unavailable
+in Upload Mode, while the reference line can still be repositioned.
 
 Click anywhere inside the camera preview to place the horizontal reference
 line. Its position is shown as native camera coordinates (`x`, `y`) and is

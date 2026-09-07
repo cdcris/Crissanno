@@ -34,12 +34,21 @@ class VideoRecorder:
         self._recording = False
         self._lock = threading.Lock()
 
-    def start(self, capture_dir: Path, first_frame) -> Path:
+    def start(
+        self,
+        capture_dir: Path,
+        first_frame,
+        *,
+        source_fps: float | None = None,
+    ) -> Path:
         """Start a timestamped recording or raise ``RecordingError``."""
         if cv2 is None:
             raise RecordingError("Install python3-opencv to record video.")
         if first_frame is None:
             raise RecordingError("The camera has not supplied a frame yet.")
+        recording_fps = self.fps if source_fps is None else source_fps
+        if recording_fps <= 0:
+            raise RecordingError("The video frame rate must be greater than zero.")
 
         try:
             capture_dir.mkdir(parents=True, exist_ok=True)
@@ -60,7 +69,7 @@ class VideoRecorder:
                 writer = cv2.VideoWriter(
                     str(path),
                     cv2.VideoWriter_fourcc(*codec),
-                    self.fps * self.playback_speed,
+                    recording_fps * self.playback_speed,
                     (width, height),
                 )
             except Exception as error:
@@ -94,6 +103,13 @@ class VideoRecorder:
             if not self._recording or self._writer is None:
                 return
             self._writer.write(self.frame_processor.process(rgb_frame))
+
+    def write_processed(self, video_frame) -> None:
+        """Save a BGR frame that already has markers and detections."""
+        with self._lock:
+            if not self._recording or self._writer is None:
+                return
+            self._writer.write(video_frame)
 
     def set_recording(self, recording: bool) -> None:
         """Pause or resume writes without closing the output file."""
