@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+
+# Local Python environments
+.venv/
+venv/
+servescan/
+
+# Runtime output and user-specific state
+captures/
+logs/
+marker_position.json
+
