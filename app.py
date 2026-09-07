@@ -118,13 +118,14 @@ class ServeScanApp(tk.Tk):
             self.errors.handle(error, "Video upload error")
 
     def _on_feature_mode_changed(self, mode: str) -> None:
+        self.video_upload.clear()
         if mode == "upload":
-            try:
-                self.video_upload.resume_selected()
-            except Exception as error:
-                self.errors.handle(error, "Video upload error")
+            self._render_uploaded_frame(
+                None,
+                CAMERA_SIZE,
+                float(CAMERA_FPS),
+            )
         else:
-            self.video_upload.stop()
             self._render_preview()
 
     def _render_uploaded_frame(self, frame, size: tuple[int, int], fps: float) -> None:

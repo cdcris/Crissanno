@@ -1,5 +1,6 @@
 import unittest
 from pathlib import Path
+import threading
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -8,7 +9,7 @@ import upload.controller as video_upload_module
 from app import ServeScanApp
 from capture.controller import CaptureController
 from capture.state import CaptureState
-from config import APP_TITLE
+from config import APP_TITLE, CAMERA_FPS, CAMERA_SIZE
 from shared.errors import ErrorHandler, RecordingError
 from ui.touch_button import TouchButton
 from ui.window import ServeScanUI
@@ -101,6 +102,85 @@ class AppLogicTests(unittest.TestCase):
         with patch.object(video_upload_module.filedialog, "askopenfilename", return_value=""):
             controller.choose_video()
         self.assertEqual(controller.selected_path, Path("existing.mp4"))
+
+    def test_clearing_upload_stops_detection_and_discards_preview(self):
+        controller = VideoUploadController(
+            Mock(), default_size=(1280, 720), default_fps=30,
+            render_frame=Mock(), set_detail=Mock(), is_upload_mode=lambda: True,
+        )
+        controller.selected_path = Path("existing.mp4")
+        controller.rgb_frame = "detected-frame"
+        controller.size = (640, 360)
+        controller.fps = 25.0
+        controller.total_frames = 100
+        controller.processed_frames = 42
+
+        with patch.object(controller, "stop") as stop:
+            controller.clear()
+
+        stop.assert_called_once_with()
+        self.assertIsNone(controller.selected_path)
+        self.assertIsNone(controller.rgb_frame)
+        self.assertEqual(controller.size, (1280, 720))
+        self.assertEqual(controller.fps, 30.0)
+        self.assertEqual(controller.total_frames, 0)
+        self.assertEqual(controller.processed_frames, 0)
+
+    def test_cancelled_detection_does_not_publish_a_stale_frame(self):
+        process_started = threading.Event()
+        allow_process_to_finish = threading.Event()
+
+        def process_frame(frame):
+            process_started.set()
+            allow_process_to_finish.wait(timeout=1)
+            return frame
+
+        controller = VideoUploadController(
+            Mock(), default_size=(1280, 720), default_fps=30,
+            render_frame=Mock(), set_detail=Mock(), is_upload_mode=lambda: True,
+            process_frame=process_frame,
+        )
+        frame = SimpleNamespace(shape=(360, 640, 3))
+        capture = Mock()
+        capture.read.return_value = (True, frame)
+        worker = threading.Thread(
+            target=controller._process_video,
+            args=(capture, controller._stop_event, False),
+        )
+
+        worker.start()
+        self.assertTrue(process_started.wait(timeout=1))
+        controller._stop_event.set()
+        allow_process_to_finish.set()
+        worker.join(timeout=1)
+
+        self.assertFalse(worker.is_alive())
+        self.assertIsNone(controller.rgb_frame)
+
+    def test_entering_upload_mode_clears_the_previous_preview(self):
+        instance = bare_app()
+        instance.ui.feature_mode = "upload"
+
+        instance._on_feature_mode_changed("upload")
+
+        instance.video_upload.clear.assert_called_once_with()
+        instance.ui.render_preview.assert_called_once_with(
+            None,
+            CaptureState.READY,
+            CAMERA_SIZE,
+            float(CAMERA_FPS),
+        )
+
+    def test_leaving_upload_mode_clears_detection_and_shows_camera(self):
+        instance = bare_app()
+
+        instance._on_feature_mode_changed("capture")
+
+        instance.video_upload.clear.assert_called_once_with()
+        instance.ui.render_preview.assert_called_once_with(
+            instance.last_rgb_frame,
+            instance.capture_control.state,
+        )
 
     def test_uploaded_frame_replaces_camera_preview(self):
         root = Mock()

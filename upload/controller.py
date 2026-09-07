@@ -180,6 +180,8 @@ class VideoUploadController:
                     break
                 height, width = frame.shape[:2]
                 processed_frame = self.process_frame(frame)
+                if stop_event.is_set():
+                    break
                 if save_output and not output_started:
                     if self.recorder is None or self.capture_dir is None:
                         raise RuntimeError(
@@ -231,6 +233,30 @@ class VideoUploadController:
         elif not self.closing:
             self._update()
 
+    def clear(self) -> None:
+        """Stop processing and discard the selected video's preview state."""
+        with self._lock:
+            self._terminal_delivered = True
+        self.stop()
+        self._discard_preview_state()
+
+    def _discard_preview_state(self) -> None:
+        """Restore upload state without rendering or stopping the worker."""
+        self.selected_path = None
+        with self._lock:
+            self.rgb_frame = None
+            self.size = self.default_size
+            self.fps = float(self.default_fps)
+            self.total_frames = 0
+            self.processed_frames = 0
+            self._worker_error = None
+            self._saved_path = None
+            self._terminal_delivered = True
+            self._active_name = ""
+            self._frame_version += 1
+            self._rendered_version = self._frame_version
+
     def close(self) -> None:
         self.closing = True
         self.stop()
+        self._discard_preview_state()
