@@ -8,6 +8,7 @@ import upload.controller as video_upload_module
 from app import ServeScanApp
 from capture.controller import CaptureController
 from capture.state import CaptureState
+from config import APP_TITLE
 from shared.errors import ErrorHandler, RecordingError
 from ui.touch_button import TouchButton
 from ui.window import ServeScanUI
@@ -275,6 +276,28 @@ class TouchButtonLogicTests(unittest.TestCase):
 
 
 class InterfaceModeTests(unittest.TestCase):
+    def test_configured_app_title_is_used_by_window(self):
+        root = Mock()
+        with patch("ui.window.ServeScanTheme"), patch.object(
+            ServeScanUI, "_build"
+        ):
+            ui = ServeScanUI(
+                root,
+                title=APP_TITLE,
+                window_size="1024x600",
+                camera_size=(1280, 720),
+                camera_fps=30,
+                marker_position=None,
+                on_upload_video=Mock(),
+                on_mode_changed=Mock(),
+                on_toggle_capture=Mock(),
+                on_stop_capture=Mock(),
+                on_marker_click=Mock(),
+            )
+
+        self.assertEqual(ui.app_title, APP_TITLE)
+        root.title.assert_called_once_with(APP_TITLE)
+
     def test_capture_is_default_and_mode_switch_separates_controls(self):
         ui = ServeScanUI.__new__(ServeScanUI)
         ui.feature_mode = "capture"

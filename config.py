@@ -5,7 +5,7 @@ from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parent
 
-APP_TITLE = "ServeScan"
+APP_TITLE = "Bap Cris"
 WINDOW_SIZE = "1024x600"
 
 CAMERA_SIZE = (1280, 720)

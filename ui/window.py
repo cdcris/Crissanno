@@ -37,6 +37,7 @@ class ServeScanUI:
         on_marker_click: Callable[[int, int, int, int], None],
     ) -> None:
         self.root = root
+        self.app_title = title
         self.camera_size = camera_size
         self.camera_fps = camera_fps
         self.marker_position = marker_position
@@ -48,7 +49,7 @@ class ServeScanUI:
         self.media_fps = camera_fps
         self.on_mode_changed = on_mode_changed
 
-        root.title(title)
+        root.title(self.app_title)
         root.geometry(window_size)
         root.minsize(800, 480)
         self.theme = ServeScanTheme(root)
@@ -79,7 +80,7 @@ class ServeScanUI:
         title_box = tk.Frame(header, bg=COLORS["surface"])
         title_box.grid(row=0, column=1, sticky="w")
         tk.Label(
-            title_box, text="SERVESCAN", bg=COLORS["surface"], fg=COLORS["text"],
+            title_box, text=self.app_title, bg=COLORS["surface"], fg=COLORS["text"],
             font=(FONT_FAMILY, 11, "bold"),
         ).pack(anchor="w")
         self.feature_label = tk.Label(
