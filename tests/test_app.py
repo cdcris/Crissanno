@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 import threading
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 import main
 import upload.controller as video_upload_module
@@ -92,6 +92,20 @@ class AppLogicTests(unittest.TestCase):
         instance.upload_video()
         instance.video_upload.choose_video.assert_called_once_with()
 
+    def test_upload_slider_seek_is_delegated_to_controller(self):
+        instance = bare_app()
+
+        instance.seek_uploaded_frame(27)
+
+        instance.video_upload.seek_frame.assert_called_once_with(27)
+
+    def test_upload_slider_preview_is_delegated_to_controller(self):
+        instance = bare_app()
+
+        instance.preview_uploaded_frame(18)
+
+        instance.video_upload.preview_frame.assert_called_once_with(18)
+
     def test_cancel_upload_keeps_existing_selection(self):
         root = Mock()
         controller = VideoUploadController(
@@ -140,22 +154,134 @@ class AppLogicTests(unittest.TestCase):
             render_frame=Mock(), set_detail=Mock(), is_upload_mode=lambda: True,
             process_frame=process_frame,
         )
+        controller.selected_path = Path("serve.mp4")
+        controller.total_frames = 10
         frame = SimpleNamespace(shape=(360, 640, 3))
         capture = Mock()
+        capture.isOpened.return_value = True
         capture.read.return_value = (True, frame)
-        worker = threading.Thread(
-            target=controller._process_video,
-            args=(capture, controller._stop_event, False),
+        fake_cv = SimpleNamespace(
+            CAP_PROP_POS_FRAMES=1,
+            COLOR_BGR2RGB=2,
+            VideoCapture=Mock(return_value=capture),
+            cvtColor=Mock(return_value="stale-rgb"),
         )
 
-        worker.start()
-        self.assertTrue(process_started.wait(timeout=1))
-        controller._stop_event.set()
-        allow_process_to_finish.set()
-        worker.join(timeout=1)
+        with patch.object(video_upload_module, "cv2", fake_cv):
+            controller.seek_frame(4)
+            worker = controller._thread
+            self.assertTrue(process_started.wait(timeout=1))
+            controller._stop_event.set()
+            allow_process_to_finish.set()
+            worker.join(timeout=1)
 
         self.assertFalse(worker.is_alive())
         self.assertIsNone(controller.rgb_frame)
+
+    def test_seek_detects_only_the_requested_frame(self):
+        root = Mock()
+        root.after.return_value = "poll-timer"
+        render = Mock()
+        process_frame = Mock(return_value="detected-bgr")
+        controller = VideoUploadController(
+            root,
+            default_size=(1280, 720),
+            default_fps=30,
+            render_frame=render,
+            set_detail=Mock(),
+            is_upload_mode=lambda: True,
+            process_frame=process_frame,
+        )
+        controller.selected_path = Path("serve.mp4")
+        controller.total_frames = 100
+        controller.fps = 25.0
+        controller._active_name = "serve.mp4"
+        frame = SimpleNamespace(shape=(360, 640, 3))
+        capture = Mock()
+        capture.isOpened.return_value = True
+        capture.read.return_value = (True, frame)
+        fake_cv = SimpleNamespace(
+            CAP_PROP_POS_FRAMES=1,
+            COLOR_BGR2RGB=2,
+            VideoCapture=Mock(return_value=capture),
+            cvtColor=Mock(return_value="selected-rgb"),
+        )
+
+        with patch.object(video_upload_module, "cv2", fake_cv):
+            controller.seek_frame(37)
+            controller._thread.join(timeout=1)
+            controller._update()
+
+        capture.set.assert_called_once_with(fake_cv.CAP_PROP_POS_FRAMES, 37)
+        process_frame.assert_called_once_with(frame)
+        render.assert_called_once_with("selected-rgb", (640, 360), 25.0)
+        self.assertEqual(controller.current_frame, 37)
+
+    def test_preview_seek_skips_detection_while_slider_moves(self):
+        process_frame = Mock()
+        controller = VideoUploadController(
+            Mock(),
+            default_size=(1280, 720),
+            default_fps=30,
+            render_frame=Mock(),
+            set_detail=Mock(),
+            is_upload_mode=lambda: True,
+            process_frame=process_frame,
+        )
+        controller.selected_path = Path("serve.mp4")
+        controller.total_frames = 100
+        frame = SimpleNamespace(shape=(360, 640, 3))
+        capture = Mock()
+        capture.isOpened.return_value = True
+        capture.read.return_value = (True, frame)
+        fake_cv = SimpleNamespace(
+            CAP_PROP_POS_FRAMES=1,
+            COLOR_BGR2RGB=2,
+            VideoCapture=Mock(return_value=capture),
+            cvtColor=Mock(return_value="raw-rgb"),
+        )
+
+        with patch.object(video_upload_module, "cv2", fake_cv):
+            controller.preview_frame(21)
+            controller._thread.join(timeout=1)
+            controller._update()
+
+        capture.set.assert_called_once_with(fake_cv.CAP_PROP_POS_FRAMES, 21)
+        process_frame.assert_not_called()
+        controller.render_frame.assert_called_once_with(
+            "raw-rgb", (640, 360), 30.0
+        )
+
+    def test_loading_video_configures_slider_and_requests_first_frame(self):
+        timeline = Mock()
+        controller = VideoUploadController(
+            Mock(),
+            default_size=(1280, 720),
+            default_fps=30,
+            render_frame=Mock(),
+            set_detail=Mock(),
+            is_upload_mode=lambda: True,
+            set_timeline=timeline,
+        )
+        capture = Mock()
+        capture.isOpened.return_value = True
+        capture.get.side_effect = [25.0, 240]
+        fake_cv = SimpleNamespace(
+            CAP_PROP_FPS=1,
+            CAP_PROP_FRAME_COUNT=2,
+            VideoCapture=Mock(return_value=capture),
+        )
+
+        with patch.object(video_upload_module, "cv2", fake_cv), patch.object(
+            controller, "stop"
+        ), patch.object(controller, "seek_frame") as seek_frame:
+            controller.start(Path("serve.mp4"))
+
+        capture.release.assert_called_once_with()
+        timeline.assert_called_once_with(240, 0)
+        seek_frame.assert_called_once_with(0)
+        self.assertEqual(controller.fps, 25.0)
+        self.assertEqual(controller.selected_path, Path("serve.mp4"))
 
     def test_entering_upload_mode_clears_the_previous_preview(self):
         instance = bare_app()
@@ -181,104 +307,6 @@ class AppLogicTests(unittest.TestCase):
             instance.last_rgb_frame,
             instance.capture_control.state,
         )
-
-    def test_uploaded_frame_replaces_camera_preview(self):
-        root = Mock()
-        render = Mock()
-        process_frame = Mock(return_value="detected-bgr")
-        set_detail = Mock()
-        controller = VideoUploadController(
-            root, default_size=(1280, 720), default_fps=30,
-            render_frame=render, set_detail=set_detail,
-            is_upload_mode=lambda: True,
-            process_frame=process_frame,
-        )
-        controller.fps = 25.0
-        controller.total_frames = 1
-        controller._terminal_delivered = False
-        frame = SimpleNamespace(shape=(360, 640, 3))
-        capture = Mock()
-        capture.read.side_effect = [(True, frame), (False, None)]
-        fake_cv = SimpleNamespace(
-            COLOR_BGR2RGB=1,
-            cvtColor=Mock(return_value="uploaded-rgb"),
-        )
-
-        with patch.object(video_upload_module, "cv2", fake_cv):
-            controller._process_video(capture, controller._stop_event, False)
-            controller._update()
-
-        process_frame.assert_called_once_with(frame)
-        fake_cv.cvtColor.assert_called_once_with(
-            "detected-bgr", fake_cv.COLOR_BGR2RGB
-        )
-        self.assertEqual(controller.rgb_frame, "uploaded-rgb")
-        self.assertEqual(controller.size, (640, 360))
-        render.assert_called_once_with("uploaded-rgb", (640, 360), 25.0)
-        set_detail.assert_called_once_with("Uploaded video finished")
-
-    def test_uploaded_frames_are_saved_and_finalized(self):
-        root = Mock()
-        recorder = Mock()
-        recorder.stop.return_value = Path("captures/annotated.mp4")
-        on_saved = Mock()
-        controller = VideoUploadController(
-            root,
-            default_size=(1280, 720),
-            default_fps=30,
-            render_frame=Mock(),
-            set_detail=Mock(),
-            is_upload_mode=lambda: True,
-            process_frame=Mock(return_value="annotated-bgr"),
-            recorder=recorder,
-            capture_dir=Path("captures"),
-            on_saved=on_saved,
-        )
-        controller.fps = 24.0
-        controller.total_frames = 1
-        controller._terminal_delivered = False
-        frame = SimpleNamespace(shape=(360, 640, 3))
-        capture = Mock()
-        capture.read.side_effect = [(True, frame), (False, None)]
-        fake_cv = SimpleNamespace(
-            COLOR_BGR2RGB=1,
-            cvtColor=Mock(return_value="annotated-rgb"),
-        )
-
-        with patch.object(video_upload_module, "cv2", fake_cv):
-            controller._process_video(capture, controller._stop_event, True)
-            controller._update()
-
-        recorder.start.assert_called_once_with(
-            Path("captures"), "annotated-bgr", source_fps=24.0
-        )
-        recorder.write_processed.assert_called_once_with("annotated-bgr")
-        recorder.stop.assert_called_once_with()
-        on_saved.assert_called_once_with(Path("captures/annotated.mp4"))
-
-    def test_upload_progress_reports_percentage_and_frame_count(self):
-        root = Mock()
-        root.after.return_value = "progress-timer"
-        set_detail = Mock()
-        controller = VideoUploadController(
-            root,
-            default_size=(1280, 720),
-            default_fps=30,
-            render_frame=Mock(),
-            set_detail=set_detail,
-            is_upload_mode=lambda: True,
-        )
-        controller._worker_done = False
-        controller.total_frames = 20
-        controller.processed_frames = 7
-        controller._active_name = "serve.mp4"
-
-        controller._update()
-
-        set_detail.assert_called_once_with(
-            "Detecting 35% • frame 7/20 • serve.mp4"
-        )
-        root.after.assert_called_once_with(33, controller._update)
 
     def test_elapsed_counts_only_active_segments(self):
         controller = CaptureController(
@@ -356,6 +384,45 @@ class TouchButtonLogicTests(unittest.TestCase):
 
 
 class InterfaceModeTests(unittest.TestCase):
+    def test_upload_slider_waits_for_release_before_requesting_frame(self):
+        ui = ServeScanUI.__new__(ServeScanUI)
+        ui.root = Mock()
+        ui.root.after.side_effect = [
+            "preview-timer",
+            "seek-timer",
+            "released-seek-timer",
+        ]
+        ui.upload_slider = Mock()
+        ui.upload_slider.cget.return_value = 99
+        ui.upload_slider.get.return_value = 12
+        ui.upload_frame_label = Mock()
+        ui.on_upload_preview = Mock()
+        ui.on_upload_seek = Mock()
+        ui._setting_upload_slider = False
+        ui._upload_preview_after_id = None
+        ui._upload_seek_after_id = None
+        ui._last_requested_upload_frame = None
+
+        ui._on_upload_slider("12")
+
+        self.assertEqual(ui.root.after.call_count, 2)
+        ui.on_upload_preview.assert_not_called()
+        ui.on_upload_seek.assert_not_called()
+
+        ui._on_upload_slider_release()
+
+        self.assertEqual(
+            ui.root.after_cancel.call_args_list,
+            [call("preview-timer"), call("seek-timer")],
+        )
+        ui.on_upload_preview.assert_called_once_with(12)
+        ui.on_upload_seek.assert_not_called()
+
+        detection_callback = ui.root.after.call_args.args[1]
+        detection_callback()
+
+        ui.on_upload_seek.assert_called_once_with(12)
+
     def test_configured_app_title_is_used_by_window(self):
         root = Mock()
         with patch("ui.window.ServeScanTheme"), patch.object(

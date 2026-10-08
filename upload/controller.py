@@ -13,11 +13,8 @@ try:
 except ImportError:
     cv2 = None
 
-from capture.recorder import VideoRecorder
-
-
 class VideoUploadController:
-    """Preview uploaded frames and save their annotated slow-motion copy."""
+    """Seek to and detect individual frames from an uploaded video."""
 
     def __init__(
         self,
@@ -29,9 +26,7 @@ class VideoUploadController:
         set_detail: Callable[[str], None],
         is_upload_mode: Callable[[], bool],
         process_frame: Callable[[object], object] | None = None,
-        recorder: VideoRecorder | None = None,
-        capture_dir: Path | None = None,
-        on_saved: Callable[[Path], None] | None = None,
+        set_timeline: Callable[[int, int], None] | None = None,
     ) -> None:
         self.root = root
         self.default_size = default_size
@@ -40,9 +35,7 @@ class VideoUploadController:
         self.set_detail = set_detail
         self.is_upload_mode = is_upload_mode
         self.process_frame = process_frame or (lambda frame: frame)
-        self.recorder = recorder
-        self.capture_dir = capture_dir
-        self.on_saved = on_saved
+        self.set_timeline = set_timeline or (lambda _total, _current: None)
         self.selected_path: Path | None = None
         self.capture = None
         self.after_id = None
@@ -55,12 +48,14 @@ class VideoUploadController:
         self._frame_version = 0
         self._rendered_version = 0
         self._worker_error: Exception | None = None
-        self._saved_path: Path | None = None
         self._worker_done = True
         self._terminal_delivered = True
+        self._detection_requested = False
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+        self._processing_lock = threading.Lock()
+        self.current_frame = 0
         self._active_name = ""
 
     def choose_video(self) -> Path | None:
@@ -75,12 +70,11 @@ class VideoUploadController:
         if not selected:
             return None
         path = Path(selected)
-        self.set_detail(f"Preparing detection • {path.name}")
-        self.start(path, save_output=True)
-        self.selected_path = path
+        self.set_detail(f"Loading video • {path.name}")
+        self.start(path)
         return path
 
-    def start(self, path: Path, *, save_output: bool = False) -> None:
+    def start(self, path: Path) -> None:
         if cv2 is None:
             raise RuntimeError("Install python3-opencv to preview uploaded video.")
         self.stop()
@@ -94,21 +88,20 @@ class VideoUploadController:
         self.fps = fps if fps > 0 else float(self.default_fps)
         total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
         self.total_frames = max(0, total_frames)
+        if self.total_frames == 0:
+            capture.release()
+            raise RuntimeError(f"Video contains no readable frames: {path.name}")
         self.processed_frames = 0
-        self.capture = capture
+        capture.release()
+        self.capture = None
+        self.selected_path = path
+        self.current_frame = 0
         self._active_name = path.name
-        self._stop_event = threading.Event()
         self._worker_error = None
-        self._saved_path = None
-        self._worker_done = False
-        self._terminal_delivered = False
-        self._thread = threading.Thread(
-            target=self._process_video,
-            args=(capture, self._stop_event, save_output),
-            daemon=True,
-        )
-        self._thread.start()
-        self._schedule_poll()
+        self._worker_done = True
+        self._terminal_delivered = True
+        self.set_timeline(self.total_frames, 0)
+        self.seek_frame(0)
 
     def resume_selected(self) -> None:
         if self.selected_path is None:
@@ -116,7 +109,83 @@ class VideoUploadController:
             self.render_frame(None, self.default_size, float(self.default_fps))
             return
         self.start(self.selected_path)
-        self.set_detail(f"Detecting preview • {self.selected_path.name}")
+
+    def seek_frame(self, frame_number: int) -> None:
+        """Start detection for one frame, cancelling publication of stale work."""
+        self._request_frame(frame_number, detect=True)
+
+    def preview_frame(self, frame_number: int) -> None:
+        """Display one raw frame while the upload slider is moving."""
+        self._request_frame(frame_number, detect=False)
+
+    def _request_frame(self, frame_number: int, *, detect: bool) -> None:
+        if self.selected_path is None:
+            return
+        frame_number = min(self.total_frames - 1, max(0, int(frame_number)))
+        self._stop_event.set()
+        stop_event = threading.Event()
+        self._stop_event = stop_event
+        self.current_frame = frame_number
+        self.processed_frames = frame_number + 1
+        self._worker_error = None
+        self._worker_done = False
+        self._terminal_delivered = False
+        self._detection_requested = detect
+        if detect:
+            self.set_detail(
+                f"Detecting frame {frame_number + 1}/{self.total_frames} • "
+                f"{self._active_name}"
+            )
+        self._thread = threading.Thread(
+            target=self._process_selected_frame,
+            args=(self.selected_path, frame_number, stop_event, detect),
+            daemon=True,
+        )
+        self._thread.start()
+        self._schedule_poll()
+
+    def _process_selected_frame(
+        self,
+        path: Path,
+        frame_number: int,
+        stop_event: threading.Event,
+        detect: bool,
+    ) -> None:
+        """Read and annotate one requested frame away from Tk's event loop."""
+        capture = None
+        worker_error = None
+        try:
+            with self._processing_lock:
+                if stop_event.is_set():
+                    return
+                capture = cv2.VideoCapture(str(path))
+                if not capture.isOpened():
+                    raise RuntimeError(f"Could not open video: {path.name}")
+                capture.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+                ok, frame = capture.read()
+                if not ok:
+                    raise RuntimeError(f"Could not read frame {frame_number + 1}.")
+                height, width = frame.shape[:2]
+                processed_frame = self.process_frame(frame) if detect else frame
+                if stop_event.is_set():
+                    return
+                rgb_frame = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
+                with self._lock:
+                    if stop_event is not self._stop_event or stop_event.is_set():
+                        return
+                    self.rgb_frame = rgb_frame
+                    self.size = (width, height)
+                    self._frame_version += 1
+        except Exception as error:
+            worker_error = error
+        finally:
+            if capture is not None:
+                capture.release()
+            with self._lock:
+                if stop_event is self._stop_event:
+                    self.capture = None
+                    self._worker_error = worker_error
+                    self._worker_done = True
 
     def _schedule_poll(self) -> None:
         if not self.closing and self.after_id is None:
@@ -132,11 +201,9 @@ class VideoUploadController:
             frame_version = self._frame_version
             rgb_frame = self.rgb_frame
             size = self.size
-            processed_frames = self.processed_frames
-            total_frames = self.total_frames
             worker_done = self._worker_done
             worker_error = self._worker_error
-            saved_path = self._saved_path
+            detection_requested = self._detection_requested
 
         if self.is_upload_mode() and frame_version != self._rendered_version:
             self._rendered_version = frame_version
@@ -147,76 +214,14 @@ class VideoUploadController:
                 self._terminal_delivered = True
                 if worker_error is not None:
                     raise worker_error
-                if saved_path is not None and self.on_saved is not None:
-                    self.on_saved(saved_path)
-                elif self.is_upload_mode():
-                    self.set_detail("Uploaded video finished")
+                if self.is_upload_mode() and detection_requested:
+                    self.set_detail(
+                        f"Frame {self.current_frame + 1}/{self.total_frames} • "
+                        f"{self._active_name}"
+                    )
             return
 
-        if self.is_upload_mode():
-            if total_frames > 0:
-                percent = min(100, round(processed_frames * 100 / total_frames))
-                progress = f"{percent}% • frame {processed_frames}/{total_frames}"
-            else:
-                progress = f"frame {processed_frames}"
-            self.set_detail(f"Detecting {progress} • {self._active_name}")
         self._schedule_poll()
-
-    def _process_video(
-        self,
-        capture,
-        stop_event: threading.Event,
-        save_output: bool,
-    ) -> None:
-        """Detect, annotate, and save frames away from Tk's event loop."""
-        output_started = False
-        saved_path = None
-        worker_error = None
-        processed_frames = 0
-        try:
-            while not stop_event.is_set():
-                ok, frame = capture.read()
-                if not ok:
-                    break
-                height, width = frame.shape[:2]
-                processed_frame = self.process_frame(frame)
-                if stop_event.is_set():
-                    break
-                if save_output and not output_started:
-                    if self.recorder is None or self.capture_dir is None:
-                        raise RuntimeError(
-                            "Uploaded-video recording is not configured."
-                        )
-                    self.recorder.start(
-                        self.capture_dir,
-                        processed_frame,
-                        source_fps=self.fps,
-                    )
-                    output_started = True
-                if output_started:
-                    self.recorder.write_processed(processed_frame)
-                rgb_frame = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
-                processed_frames += 1
-                with self._lock:
-                    self.rgb_frame = rgb_frame
-                    self.size = (width, height)
-                    self.processed_frames = processed_frames
-                    self._frame_version += 1
-        except Exception as error:
-            worker_error = error
-        finally:
-            capture.release()
-            if output_started and self.recorder is not None:
-                try:
-                    saved_path = self.recorder.stop()
-                except Exception as error:
-                    if worker_error is None:
-                        worker_error = error
-            with self._lock:
-                self.capture = None
-                self._saved_path = saved_path
-                self._worker_error = worker_error
-                self._worker_done = True
 
     def stop(self) -> None:
         if self.after_id is not None:
@@ -249,12 +254,14 @@ class VideoUploadController:
             self.fps = float(self.default_fps)
             self.total_frames = 0
             self.processed_frames = 0
+            self.current_frame = 0
             self._worker_error = None
-            self._saved_path = None
             self._terminal_delivered = True
+            self._detection_requested = False
             self._active_name = ""
             self._frame_version += 1
             self._rendered_version = self._frame_version
+        self.set_timeline(0, 0)
 
     def close(self) -> None:
         self.closing = True

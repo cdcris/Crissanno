@@ -17,6 +17,7 @@ COLORS = {
     "surface_raised": "#FFFFFF",
     "surface_soft": "#ECEEEE",
     "border": "#D4D7D8",
+    "progress_track": "#CBD0D2",
     "text": "#35383A",
     "text_muted": "#53575A",
     "primary": "#DA261C",

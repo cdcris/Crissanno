@@ -60,6 +60,8 @@ class ServeScanApp(tk.Tk):
             on_toggle_capture=self.toggle_capture,
             on_stop_capture=self.stop_capture,
             on_marker_click=self._set_marker_position,
+            on_upload_preview=self.preview_uploaded_frame,
+            on_upload_seek=self.seek_uploaded_frame,
         )
 
         self.frame_processor = FrameProcessor(
@@ -69,11 +71,6 @@ class ServeScanApp(tk.Tk):
         )
         self.frame_processor.set_marker(self.marker_position)
         self.recorder = VideoRecorder(
-            CAMERA_FPS,
-            SLOW_MOTION_SPEED,
-            self.frame_processor,
-        )
-        self.upload_recorder = VideoRecorder(
             CAMERA_FPS,
             SLOW_MOTION_SPEED,
             self.frame_processor,
@@ -97,9 +94,7 @@ class ServeScanApp(tk.Tk):
             set_detail=self.ui.set_detail,
             is_upload_mode=lambda: self.ui.feature_mode == "upload",
             process_frame=self.frame_processor.process_bgr,
-            recorder=self.upload_recorder,
-            capture_dir=CAPTURE_DIR,
-            on_saved=self._show_saved_uploaded_video,
+            set_timeline=self.ui.set_upload_timeline,
         )
 
         self.protocol("WM_DELETE_WINDOW", self.close)
@@ -117,6 +112,20 @@ class ServeScanApp(tk.Tk):
         except Exception as error:
             self.errors.handle(error, "Video upload error")
 
+    def seek_uploaded_frame(self, frame_number: int) -> None:
+        """Detect and display the settled frame selected by the upload slider."""
+        try:
+            self.video_upload.seek_frame(frame_number)
+        except Exception as error:
+            self.errors.handle(error, "Video frame error")
+
+    def preview_uploaded_frame(self, frame_number: int) -> None:
+        """Display an undecorated frame while the upload slider is moving."""
+        try:
+            self.video_upload.preview_frame(frame_number)
+        except Exception as error:
+            self.errors.handle(error, "Video preview error")
+
     def _on_feature_mode_changed(self, mode: str) -> None:
         self.video_upload.clear()
         if mode == "upload":
@@ -130,15 +139,6 @@ class ServeScanApp(tk.Tk):
 
     def _render_uploaded_frame(self, frame, size: tuple[int, int], fps: float) -> None:
         self.ui.render_preview(frame, CaptureState.READY, size, fps)
-
-    def _show_saved_uploaded_video(self, saved_path) -> None:
-        """Report the annotated slow-motion copy created from an upload."""
-        self.ui.show_saved_capture(
-            saved_path,
-            speed=SLOW_MOTION_SPEED,
-            detection_error=self.frame_processor.detection_error,
-            project_dir=PROJECT_DIR,
-        )
 
     def report_callback_exception(self, exc_type, exc_value, exc_traceback) -> None:
         """Log exceptions raised by Tk event and timer callbacks."""
@@ -167,7 +167,10 @@ class ServeScanApp(tk.Tk):
             self.marker_store.save(position)
         except Exception as error:
             self.ui.set_detail(self.errors.handle(error, "Line position error"))
-        self._render_preview()
+        if self.ui.feature_mode == "upload" and self.video_upload.selected_path:
+            self.video_upload.seek_frame(self.video_upload.current_frame)
+        else:
+            self._render_preview()
 
     def _toggle_fullscreen(self, _event=None) -> None:
         self.attributes("-fullscreen", not bool(self.attributes("-fullscreen")))

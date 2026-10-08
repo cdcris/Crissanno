@@ -35,6 +35,8 @@ class ServeScanUI:
         on_toggle_capture: Callable[[], None],
         on_stop_capture: Callable[[], None],
         on_marker_click: Callable[[int, int, int, int], None],
+        on_upload_preview: Callable[[int], None] | None = None,
+        on_upload_seek: Callable[[int], None] | None = None,
     ) -> None:
         self.root = root
         self.app_title = title
@@ -48,6 +50,12 @@ class ServeScanUI:
         self.media_size = camera_size
         self.media_fps = camera_fps
         self.on_mode_changed = on_mode_changed
+        self.on_upload_preview = on_upload_preview or (lambda _frame: None)
+        self.on_upload_seek = on_upload_seek or (lambda _frame: None)
+        self._upload_preview_after_id = None
+        self._upload_seek_after_id = None
+        self._last_requested_upload_frame: int | None = None
+        self._setting_upload_slider = False
 
         root.title(self.app_title)
         root.geometry(window_size)
@@ -118,6 +126,43 @@ class ServeScanUI:
         )
         self.preview.configure(cursor="crosshair")
 
+        self.upload_timeline = tk.Frame(
+            content,
+            bg=COLORS["surface_soft"],
+            padx=8,
+            pady=4,
+        )
+        self.upload_timeline.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self.upload_timeline.columnconfigure(0, weight=1)
+        self.upload_slider = tk.Scale(
+            self.upload_timeline,
+            from_=0,
+            to=0,
+            orient="horizontal",
+            showvalue=False,
+            resolution=1,
+            command=self._on_upload_slider,
+            bg=COLORS["surface_soft"],
+            fg=COLORS["text"],
+            troughcolor=COLORS["progress_track"],
+            activebackground=COLORS["primary_hover"],
+            highlightthickness=0,
+            bd=0,
+        )
+        self.upload_slider.grid(row=0, column=0, sticky="ew")
+        self.upload_slider.bind(
+            "<ButtonRelease-1>", self._on_upload_slider_release
+        )
+        self.upload_frame_label = tk.Label(
+            self.upload_timeline,
+            text="Frame 0 / 0",
+            bg=COLORS["surface_soft"],
+            fg=COLORS["text_muted"],
+            font=(MONO_FONT_FAMILY, 8),
+        )
+        self.upload_frame_label.grid(row=0, column=1, padx=(12, 0))
+        self.upload_timeline.grid_remove()
+
         controls = tk.Frame(root, bg=COLORS["surface"], height=74)
         controls.grid(row=2, column=0, sticky="ew")
         controls.grid_propagate(False)
@@ -129,11 +174,6 @@ class ServeScanUI:
 
         info = tk.Frame(controls, bg=COLORS["surface"])
         info.grid(row=0, column=0, sticky="w", padx=(22, 12))
-        self.elapsed_label = tk.Label(
-            info, text="00:00", bg=COLORS["surface"], fg=COLORS["text"],
-            font=(MONO_FONT_FAMILY, 14, "bold"),
-        )
-        self.elapsed_label.pack(anchor="w")
         self.detail_label = tk.Label(
             info, text="Camera starting...", bg=COLORS["surface"], fg=COLORS["text_muted"],
             font=(FONT_FAMILY, 8),
@@ -193,7 +233,65 @@ class ServeScanUI:
         self.detail_label.configure(text=text)
 
     def set_elapsed(self, seconds: int) -> None:
-        self.elapsed_label.configure(text=f"{seconds // 60:02d}:{seconds % 60:02d}")
+        """Retain the view API while elapsed time is intentionally hidden."""
+
+    def set_upload_timeline(self, total_frames: int, current_frame: int = 0) -> None:
+        """Configure the upload slider without triggering frame detection."""
+        last_frame = max(0, total_frames - 1)
+        current_frame = min(last_frame, max(0, current_frame))
+        state = "normal" if total_frames else "disabled"
+        self.upload_slider.configure(to=last_frame, state=state)
+        self._setting_upload_slider = True
+        self.upload_slider.set(current_frame)
+        self._setting_upload_slider = False
+        self._last_requested_upload_frame = current_frame if total_frames else None
+        self.upload_frame_label.configure(
+            text=f"Frame {current_frame + 1 if total_frames else 0} / {total_frames}"
+        )
+
+    def _on_upload_slider(self, value: str) -> None:
+        """Debounce slider movement so detection runs after seeking settles."""
+        if self._setting_upload_slider:
+            return
+        frame_number = int(float(value))
+        total_frames = int(float(self.upload_slider.cget("to"))) + 1
+        self.upload_frame_label.configure(
+            text=f"Frame {frame_number + 1} / {total_frames}"
+        )
+        if self._upload_preview_after_id is not None:
+            self.root.after_cancel(self._upload_preview_after_id)
+        self._upload_preview_after_id = self.root.after(
+            20, lambda: self._preview_upload_frame(frame_number)
+        )
+        if self._upload_seek_after_id is not None:
+            self.root.after_cancel(self._upload_seek_after_id)
+        self._upload_seek_after_id = self.root.after(
+            300, lambda: self._request_upload_frame(frame_number)
+        )
+
+    def _on_upload_slider_release(self, _event=None) -> None:
+        """Show the released frame, then detect it once seeking has stopped."""
+        frame_number = int(float(self.upload_slider.get()))
+        if self._upload_preview_after_id is not None:
+            self.root.after_cancel(self._upload_preview_after_id)
+            self._upload_preview_after_id = None
+        self._preview_upload_frame(frame_number)
+        if self._upload_seek_after_id is not None:
+            self.root.after_cancel(self._upload_seek_after_id)
+        self._upload_seek_after_id = self.root.after(
+            300, lambda: self._request_upload_frame(frame_number)
+        )
+
+    def _preview_upload_frame(self, frame_number: int) -> None:
+        self._upload_preview_after_id = None
+        self.on_upload_preview(frame_number)
+
+    def _request_upload_frame(self, frame_number: int) -> None:
+        self._upload_seek_after_id = None
+        if frame_number == self._last_requested_upload_frame:
+            return
+        self._last_requested_upload_frame = frame_number
+        self.on_upload_seek(frame_number)
 
     def set_marker(self, marker_position: tuple[int, int]) -> None:
         self.marker_position = marker_position
@@ -235,6 +333,8 @@ class ServeScanUI:
             self.capture_button.grid_remove()
             self.stop_button.grid_remove()
             self.upload_button.grid()
+            if hasattr(self, "upload_timeline"):
+                self.upload_timeline.grid()
             self.mode_button.configure_content(
                 "Capture Mode", "switch", COLORS["text_muted"], COLORS["text"]
             )
@@ -243,6 +343,8 @@ class ServeScanUI:
         else:
             self.feature_mode = "capture"
             self.upload_button.grid_remove()
+            if hasattr(self, "upload_timeline"):
+                self.upload_timeline.grid_remove()
             self.capture_button.grid()
             self.stop_button.grid()
             self.mode_button.configure_content(
